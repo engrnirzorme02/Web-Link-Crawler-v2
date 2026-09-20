@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /sessions/{sessionId} {
+      allow get: if isAuthenticated() && (
+        !('userId' in resource.data) || resource.data.userId == request.auth.uid
+      );
+      allow list: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        !('userId' in resource.data) || resource.data.userId == request.auth.uid
+      );
+    }
+
+    match /blueprint_access_logs/{logId} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+
+    match /blueprint_history/{historyId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if false;
+    }
+  }
+}

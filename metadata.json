@@ -1,0 +1,8 @@
+{
+  "name": "Web Link Crawler - V2 🌐 NIRZOR Advanced",
+  "description": "Engr.ikdev@gmail.com থেকে আগত Next version (Web Link Crawler_v2) - Advanced web crawler, link extractor, directory scanner, and research tool powered by Gemini AI",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
