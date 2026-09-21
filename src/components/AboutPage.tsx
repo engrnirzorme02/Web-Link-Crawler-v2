@@ -79,7 +79,8 @@ export function AboutPage({ onBack }: AboutPageProps) {
 
   const handleDownload = async (inputPass?: string) => {
     const codeToVerify = inputPass !== undefined ? inputPass : password;
-    if (codeToVerify !== '10076') {
+    const requiredPin = import.meta.env.VITE_BLUEPRINT_ACCESS_PIN || '10076';
+    if (codeToVerify !== requiredPin) {
       setError('Invalid Access Code. Please enter the 5-digit PIN.');
       return;
     }

@@ -10,8 +10,13 @@ import https from 'https';
 // Lazy-initialize Gemini SDK to prevent startup crashes when GEMINI_API_KEY is not immediately provided
 let aiClient: GoogleGenAI | null = null;
 function getAi(): GoogleGenAI {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key || key.trim() === '' || key === 'your_gemini_api_key_here' || key === 'MY_GEMINI_API_KEY') {
+    const errorMsg = 'CRITICAL SECURITY ERROR: GEMINI_API_KEY is missing or unconfigured in environment variables. Please configure GEMINI_API_KEY in your .env file or Cloud Secrets.';
+    console.error(`[SECURITY_FAIL_SAFE] ${errorMsg}`);
+    throw new Error(errorMsg);
+  }
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY || '';
     aiClient = new GoogleGenAI({
       apiKey: key,
       httpOptions: {
