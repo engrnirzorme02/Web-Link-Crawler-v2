@@ -1208,6 +1208,183 @@ Do NOT include any markdown formatting, backticks, or explanation. Just the raw 
     }
   });
 
+  // POST endpoint to generate intelligent tags using Gemini AI on demand
+  app.post('/api/generate-tags', async (req, res) => {
+    const { title, url, type, sampleUrls = [], existingTags = [] } = req.body;
+
+    try {
+      const urlsSlice = Array.isArray(sampleUrls) ? sampleUrls.slice(0, 30) : [];
+      
+      // Heuristic fallback tags if AI fails or key is missing
+      const fallbackTags: string[] = [];
+      if (url) {
+        try {
+          const parsed = new URL(url);
+          const hostParts = parsed.hostname.replace(/^www\./, '').split('.');
+          if (hostParts[0] && hostParts[0].length > 2) {
+            fallbackTags.push(hostParts[0].toLowerCase());
+          }
+          const pathSegments = parsed.pathname.split('/').filter(p => p.length > 2 && !p.includes('.'));
+          pathSegments.slice(0, 2).forEach(p => fallbackTags.push(p.toLowerCase()));
+        } catch (e) {}
+      }
+      if (type) fallbackTags.push(type.replace('_', '-'));
+
+      let generatedTags: string[] = [];
+
+      if (process.env.GEMINI_API_KEY) {
+        const prompt = `You are a categorization engine for a web crawler, link extractor, and scraping dashboard.
+Analyze the following session metadata and generate 3 to 5 highly relevant, concise category tags (keywords).
+
+Session Title: "${title || ''}"
+Target URL: "${url || ''}"
+Tool Type: "${type || 'crawler'}"
+Existing Tags: ${JSON.stringify(existingTags)}
+Sample crawled URLs/Items (first ${urlsSlice.length}):
+${urlsSlice.map((u: any, i: number) => `[${i + 1}] ${typeof u === 'string' ? u : (u.url || u.title || JSON.stringify(u))}`).join('\n')}
+
+RULES:
+1. Return ONLY 3 to 5 tags.
+2. Each tag must be 1 to 2 words, lowercase, alphanumeric with hyphens (e.g. "ecommerce", "api-docs", "blog", "portfolio", "documentation", "products", "research").
+3. DO NOT include the '#' symbol.
+4. Return a valid JSON array of strings, e.g. ["ecommerce", "pricing", "catalog"].`;
+
+        try {
+          const ai = getAi();
+          let responseText: string | null = null;
+          try {
+            const resAI = await ai.models.generateContent({
+              model: 'gemini-3.8-flash',
+              contents: prompt,
+              config: {
+                temperature: 0.2,
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: 'array',
+                  items: { type: 'string' }
+                }
+              }
+            });
+            responseText = resAI.text || null;
+          } catch (mErr) {
+            const fallbackRes = await generateContentWithFallback(ai, {
+              contents: prompt,
+              config: {
+                temperature: 0.2,
+                responseMimeType: 'application/json'
+              }
+            });
+            responseText = fallbackRes.text || null;
+          }
+
+          if (responseText) {
+            let cleaned = responseText.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+            const firstBracket = cleaned.indexOf('[');
+            const lastBracket = cleaned.lastIndexOf(']');
+            if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+              cleaned = cleaned.substring(firstBracket, lastBracket + 1);
+            }
+            const parsed = JSON.parse(cleaned);
+            if (Array.isArray(parsed)) {
+              generatedTags = parsed
+                .map(t => String(t).trim().replace(/^#+/, '').toLowerCase().replace(/[^a-z0-9-_]/g, ''))
+                .filter(t => t.length >= 2 && t.length <= 25);
+            }
+          }
+        } catch (aiErr: any) {
+          console.warn('AI tag generation error, using heuristics:', aiErr.message);
+        }
+      }
+
+      // Merge AI tags with unique fallback tags if needed
+      const finalTags = Array.from(new Set([...generatedTags, ...fallbackTags])).slice(0, 5);
+      res.json({ tags: finalTags });
+    } catch (error: any) {
+      console.error('Tag generation endpoint failed:', error);
+      res.status(500).json({ error: error.message || 'Failed to generate tags', tags: [] });
+    }
+  });
+
+  // Health check endpoint to scan crawled URLs and detect 404/500/broken links
+  app.post('/api/check-urls-health', async (req, res) => {
+    try {
+      const { urls } = req.body;
+      if (!Array.isArray(urls) || urls.length === 0) {
+        return res.status(400).json({ error: 'Array of URLs is required' });
+      }
+
+      const targetUrls: string[] = urls
+        .filter((u: any) => typeof u === 'string' && u.startsWith('http'))
+        .slice(0, 50);
+
+      const results: Array<{
+        url: string;
+        status: number;
+        ok: boolean;
+        statusText: string;
+      }> = [];
+
+      const batchSize = 6;
+      for (let i = 0; i < targetUrls.length; i += batchSize) {
+        const batch = targetUrls.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (u) => {
+          try {
+            let response;
+            try {
+              response = await axios.head(u, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
+                timeout: 5000,
+                maxRedirects: 3,
+                validateStatus: () => true
+              });
+            } catch (headErr) {
+              response = null;
+            }
+
+            if (!response || response.status === 405) {
+              response = await axios.get(u, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
+                timeout: 5000,
+                maxRedirects: 3,
+                validateStatus: () => true
+              });
+            }
+
+            const status = response.status;
+            const ok = status >= 200 && status < 400;
+            results.push({
+              url: u,
+              status,
+              ok,
+              statusText: status === 404 ? '404 Not Found' : status === 500 ? '500 Server Error' : (response.statusText || String(status))
+            });
+          } catch (err: any) {
+            const status = err.response?.status || (err.code === 'ECONNABORTED' ? 408 : 500);
+            results.push({
+              url: u,
+              status,
+              ok: false,
+              statusText: err.code === 'ECONNABORTED' ? 'Timeout (408)' : (err.message || 'Connection Error')
+            });
+          }
+        }));
+      }
+
+      res.json({
+        totalChecked: results.length,
+        brokenCount: results.filter(r => !r.ok).length,
+        results
+      });
+    } catch (error: any) {
+      console.error('Check URLs health failed:', error);
+      res.status(500).json({ error: error.message || 'Internal health check error' });
+    }
+  });
+
   // SSE endpoint for bulk fetching content from URLs
   app.post('/api/fetch-bulk', async (req, res) => {
     const { urls, customHeaders = {} } = req.body;

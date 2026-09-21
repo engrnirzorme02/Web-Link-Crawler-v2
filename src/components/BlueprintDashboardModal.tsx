@@ -81,11 +81,13 @@ Database Connection Status: ${dbStatus.toUpperCase()} (${dbLatency ? dbLatency +
 - **POST /api/chat**: Streamed Gemini responses with token window truncation (~4M chars limit).
 - **POST /api/crawl**: Server-Sent Events (SSE) stream for web crawling.
 - **POST /api/smart-crawl**: Headless browsing + AI evaluation streaming.
-- **POST /api/fetch**: Concurrent URL fetcher with custom header parsing.
+- **POST /api/fetch & /api/fetch-bulk**: Concurrent URL fetcher with custom header parsing.
+- **POST /api/check-urls-health**: Rapid HTTP status checks (HEAD/GET fallback) to detect 404/500 broken links.
+- **POST /api/auto-tag**: Gemini AI semantic session categorization and tag generation.
 
 ### Layer 4: Firebase Data Layer
-- **blueprint_history**: Stores architectural blueprint versions.
-- **user_sessions**: Saves active tab outputs and user history.
+- **sessions**: Full session persistence, results arrays, tags, pinned status, and archive state.
+- **blueprint_history**: Stores architectural blueprint versions and history snapshots.
 - **blueprint_access_logs**: Audit logs for security check unlocks.
 
 ---
@@ -94,10 +96,13 @@ Database Connection Status: ${dbStatus.toUpperCase()} (${dbLatency ? dbLatency +
 | Component | Primary Inputs | Local Buffers | API Endpoint | Firestore Target |
 | --- | --- | --- | --- | --- |
 | DataExtractor | Text / File(s) | inputText, attachedFiles | Client-side | Transient / Export |
-| BulkFetcher | URLs + Headers | customHeadersText, AbortController | POST /api/fetch | user_sessions |
-| Crawler | URLs + Depth | logs, graphNodes | POST /api/crawl (SSE) | crawls / user_sessions |
-| SmartCrawler | URLs + AI Prompt | aiInstruction, deepResearchLogs | POST /api/smart-crawl | user_sessions |
-| AIChat | Speech / File / Text | messages, contextSource | POST /api/chat | user_sessions |
+| BulkFetcher | URLs + Headers | customHeadersText, AbortController | POST /api/fetch & /fetch-bulk | sessions |
+| Crawler | URLs + Depth | logs, graphNodes | POST /api/crawl (SSE) | sessions |
+| SmartCrawler | URLs + AI Prompt | aiInstruction, deepResearchLogs | POST /api/smart-crawl | sessions |
+| AIChat | Speech / File / Text | messages, contextSource | POST /api/chat | sessions |
+| HistoryDashboard | Session filters & tags | selectedIds, filterOnlyBroken | /api/check-urls-health, /api/auto-tag | sessions |
+| SessionHealthModal | Crawled URL arrays | healthResults, brokenUrls | POST /api/check-urls-health | sessions (Atomic update) |
+| SessionCompareModal | 2 selected sessions | comparison metrics, diff sets | Client-side diff engine | Reference only |
 
 ---
 

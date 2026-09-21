@@ -4,12 +4,16 @@ import {
   History, Play, FileText, Globe, Brain, ListOrdered, Calendar, 
   Layers, Download, RefreshCw, Trash2, Pin, Archive, 
   ArchiveRestore, Upload, Hash, CheckCircle2, Loader2, Database,
-  CheckSquare, Square
+  CheckSquare, Square, Search, Sparkles, ArrowLeftRight, GitCompare, Plus, Tag, X,
+  HeartPulse, AlertTriangle
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { getMillis, cn } from '../lib/utils';
 import { GlobalExport } from './GlobalExport';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { SessionCompareModal } from './SessionCompareModal';
+import { TagEditModal } from './TagEditModal';
+import { SessionHealthModal } from './SessionHealthModal';
 
 interface HistoryDashboardProps {
   sessions: Session[];
@@ -36,11 +40,31 @@ export function HistoryDashboard({
 }: HistoryDashboardProps) {
   const [viewTab, setViewTab] = useState<'active' | 'archived'>('active');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreStatus, setRestoreStatus] = useState<string | null>(null);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [editingTagsSession, setEditingTagsSession] = useState<Session | null>(null);
+  const [compareSessions, setCompareSessions] = useState<[Session, Session] | null>(null);
+  const [comparePickId, setComparePickId] = useState<string | null>(null);
+  const [aiTaggingSessionId, setAiTaggingSessionId] = useState<string | null>(null);
+  const [bulkAiTagging, setBulkAiTagging] = useState(false);
+  const [healthCheckSession, setHealthCheckSession] = useState<Session | null>(null);
+  const [filterOnlyBroken, setFilterOnlyBroken] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getSessionBrokenCount = (s: Session) => {
+    if (!s.results || !Array.isArray(s.results)) return 0;
+    return s.results.filter((r: any) => {
+      if (typeof r === 'object' && r !== null) {
+        const st = Number(r.status || r.statusCode);
+        if (st === 404 || st >= 500) return true;
+        if (r.error || r.isBroken) return true;
+      }
+      return false;
+    }).length;
+  };
 
   const toggleSelectCard = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -85,7 +109,109 @@ export function HistoryDashboard({
     setIsSelectMode(false);
   };
 
-  // Filter sessions based on active/archived state and tags
+  const handleDirectAiTag = async (session: Session, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!session.id) return;
+    setAiTaggingSessionId(session.id);
+    try {
+      const sampleUrls = (session.results || []).slice(0, 25).map((r: any) => 
+        typeof r === 'string' ? r : (r.url || r.title || '')
+      ).filter(Boolean);
+
+      const res = await fetch('/api/generate-tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: session.title,
+          url: session.url,
+          type: session.type,
+          sampleUrls,
+          existingTags: session.tags || []
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.tags) && data.tags.length > 0) {
+          const merged = Array.from(new Set([...(session.tags || []), ...data.tags]));
+          await updateDoc(doc(db, 'sessions', session.id), {
+            tags: merged,
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Direct AI tagging failed:', err);
+    } finally {
+      setAiTaggingSessionId(null);
+    }
+  };
+
+  const handleBulkAiTag = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkAiTagging(true);
+    try {
+      const selectedList = historySessions.filter(s => s.id && selectedIds.has(s.id));
+      for (const s of selectedList) {
+        if (!s.id) continue;
+        const sampleUrls = (s.results || []).slice(0, 20).map((r: any) => 
+          typeof r === 'string' ? r : (r.url || r.title || '')
+        ).filter(Boolean);
+
+        const res = await fetch('/api/generate-tags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: s.title,
+            url: s.url,
+            type: s.type,
+            sampleUrls,
+            existingTags: s.tags || []
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.tags) && data.tags.length > 0) {
+            const merged = Array.from(new Set([...(s.tags || []), ...data.tags]));
+            await updateDoc(doc(db, 'sessions', s.id), {
+              tags: merged,
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Bulk AI tag error:', err);
+    } finally {
+      setBulkAiTagging(false);
+      setSelectedIds(new Set());
+      setIsSelectMode(false);
+    }
+  };
+
+  const handleOpenCompareFromSelection = () => {
+    const selected = historySessions.filter(s => s.id && selectedIds.has(s.id));
+    if (selected.length === 2) {
+      setCompareSessions([selected[0], selected[1]]);
+    }
+  };
+
+  const handleQuickCompare = (session: Session, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!comparePickId) {
+      setComparePickId(session.id || null);
+    } else if (comparePickId === session.id) {
+      setComparePickId(null);
+    } else {
+      const firstSession = sessions.find(s => s.id === comparePickId);
+      if (firstSession) {
+        setCompareSessions([firstSession, session]);
+        setComparePickId(null);
+      }
+    }
+  };
+
+  // Filter sessions based on active/archived state, tags, broken health, and keyword search
   const historySessions = useMemo(() => {
     return sessions.filter(s => {
       const matchType = ['crawler', 'smart_crawler', 'bulk', 'extractor', 'url_processor', 'ai_chat'].includes(s.type);
@@ -96,9 +222,21 @@ export function HistoryDashboard({
 
       if (selectedTag && (!s.tags || !s.tags.includes(selectedTag))) return false;
 
+      // Filter to only sessions with detected 404/500 broken links
+      if (filterOnlyBroken && getSessionBrokenCount(s) === 0) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchTitle = s.title?.toLowerCase().includes(q);
+        const matchUrl = s.url?.toLowerCase().includes(q);
+        const matchType = s.type?.toLowerCase().includes(q);
+        const matchTag = s.tags?.some(tag => tag.toLowerCase().includes(q));
+        if (!matchTitle && !matchUrl && !matchType && !matchTag) return false;
+      }
+
       return true;
     });
-  }, [sessions, viewTab, selectedTag]);
+  }, [sessions, viewTab, selectedTag, searchQuery, filterOnlyBroken]);
 
   // Extract all unique tags
   const allTags = useMemo(() => {
@@ -244,12 +382,14 @@ export function HistoryDashboard({
 
   const stats = useMemo(() => {
     const activeTotal = sessions.filter(s => !s.isArchived);
+    const brokenSessions = sessions.filter(s => getSessionBrokenCount(s) > 0);
     return {
       totalCrawls: activeTotal.filter(s => ['crawler', 'smart_crawler', 'bulk'].includes(s.type)).length,
       totalLinks: activeTotal.reduce((acc, s) => acc + (s.results?.length || 0), 0),
       totalSmartCrawls: activeTotal.filter(s => s.type === 'smart_crawler').length,
       activeCount: activeTotal.length,
       archivedCount: sessions.filter(s => !!s.isArchived).length,
+      brokenSessionsCount: brokenSessions.length,
     };
   }, [sessions]);
 
@@ -323,8 +463,8 @@ export function HistoryDashboard({
           </div>
         )}
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Stats Grid with Session Health Indicator */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Total Crawl Sessions</span>
@@ -346,11 +486,81 @@ export function HistoryDashboard({
             </div>
             <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalSmartCrawls}</span>
           </div>
+
+          {/* Session Health Indicator Card */}
+          <div 
+            onClick={() => setFilterOnlyBroken(!filterOnlyBroken)}
+            className={cn(
+              "border rounded-xl p-5 transition-all cursor-pointer relative group",
+              stats.brokenSessionsCount > 0
+                ? "bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60 hover:border-rose-400"
+                : "bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-emerald-400"
+            )}
+            title={stats.brokenSessionsCount > 0 ? "Click to filter sessions with 404/500 broken links" : "All crawled sessions are healthy"}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
+                Session Health
+              </span>
+              <div className={cn(
+                "p-1.5 rounded-lg",
+                stats.brokenSessionsCount > 0 ? "bg-rose-100 dark:bg-rose-900/40 text-rose-600" : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600"
+              )}>
+                <HeartPulse className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className={cn(
+                "text-2xl font-bold",
+                stats.brokenSessionsCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+              )}>
+                {stats.brokenSessionsCount > 0 ? `${stats.brokenSessionsCount} Issue${stats.brokenSessionsCount !== 1 ? 's' : ''}` : 'Optimal (100%)'}
+              </span>
+              <span className="text-[11px] font-semibold text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200 transition-colors">
+                {filterOnlyBroken ? 'Show All' : 'Filter 404/500'}
+              </span>
+            </div>
+            <p className="text-[11px] text-zinc-400 mt-1 truncate">
+              {stats.brokenSessionsCount > 0 
+                ? `${stats.brokenSessionsCount} session(s) contain 404/500 links`
+                : 'No broken links detected'}
+            </p>
+          </div>
         </div>
+
+        {/* Session Health Alert Banner */}
+        {stats.brokenSessionsCount > 0 && (
+          <div className="p-3.5 bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-800 dark:text-rose-300 animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <div className="p-1.5 bg-rose-100 dark:bg-rose-900/60 rounded-lg text-rose-600 shrink-0">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs">
+                  Session Health Alert: Crawled URLs with 404 or 500 status codes detected!
+                </p>
+                <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
+                  {stats.brokenSessionsCount} session(s) have broken links. Click on any session's Health icon to inspect & clean them up.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setFilterOnlyBroken(!filterOnlyBroken)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors border",
+                filterOnlyBroken
+                  ? "bg-rose-600 text-white border-rose-600"
+                  : "bg-white dark:bg-zinc-900 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-zinc-800"
+              )}
+            >
+              {filterOnlyBroken ? 'Clear 404/500 Filter' : 'Filter Broken Sessions'}
+            </button>
+          </div>
+        )}
 
         {/* Views: Active vs Archived and Tag Filtering */}
         <div className="space-y-3 pt-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-200 dark:border-zinc-800 pb-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-zinc-200 dark:border-zinc-800 pb-3">
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => { setViewTab('active'); setSelectedTag(null); setSelectedIds(new Set()); }}
@@ -387,17 +597,57 @@ export function HistoryDashboard({
                     ? "bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 font-semibold"
                     : "border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-900"
                 )}
-                title={isSelectMode ? "Cancel selection" : "Select multiple sessions"}
+                title={isSelectMode ? "Cancel selection" : "Select multiple sessions for bulk actions or side-by-side comparison"}
               >
                 <CheckSquare className="w-3.5 h-3.5" />
-                {isSelectMode ? 'Cancel Selection' : 'Select / Bulk'}
+                {isSelectMode ? 'Cancel Selection' : 'Select / Compare'}
               </button>
             </div>
 
-            <span className="text-xs text-zinc-400">
-              Showing {historySessions.length} session(s)
-            </span>
+            {/* Keyword Search Bar within History */}
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative w-full md:w-80">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="Search by keyword, URL, or #tag..."
+                  className="w-full text-xs pl-8 pr-7 py-1.5 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 transition-colors"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 p-0.5"
+                    title="Clear search"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <span className="text-xs text-zinc-400 shrink-0 whitespace-nowrap">
+                {historySessions.length} session{historySessions.length !== 1 ? 's' : ''}
+              </span>
+            </div>
           </div>
+
+          {/* Compare Pick Banner (when 1 session is selected for comparison via card button) */}
+          {comparePickId && (
+            <div className="p-3 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center justify-between gap-3 text-xs text-indigo-900 dark:text-indigo-200 animate-in fade-in duration-150">
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight className="w-4 h-4 text-indigo-600 dark:text-indigo-400 animate-pulse shrink-0" />
+                <span>
+                  <strong>1st session selected for comparison.</strong> Click the <strong>Compare</strong> button on any other session card to see side-by-side diff!
+                </span>
+              </div>
+              <button 
+                onClick={() => setComparePickId(null)}
+                className="px-2.5 py-1 rounded-lg text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900 font-medium shrink-0 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           {/* Bulk Action Bar */}
           {isSelectMode && (
@@ -419,25 +669,52 @@ export function HistoryDashboard({
                 </span>
               </div>
 
-              {selectedIds.size > 0 && (
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Compare 2 Sessions Button */}
+                {selectedIds.size === 2 && (
                   <button
-                    onClick={() => handleBulkArchive(viewTab === 'active')}
-                    className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
+                    onClick={handleOpenCompareFromSelection}
+                    className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-xs flex items-center gap-1.5 transition-colors animate-pulse"
+                    title="Compare these 2 selected sessions side-by-side"
                   >
-                    {viewTab === 'active' ? <Archive className="w-3.5 h-3.5" /> : <ArchiveRestore className="w-3.5 h-3.5" />}
-                    {viewTab === 'active' ? `Archive (${selectedIds.size})` : `Restore (${selectedIds.size})`}
+                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                    Compare (2 Sessions)
                   </button>
+                )}
 
+                {/* Bulk AI Auto-Tagging on Demand */}
+                {selectedIds.size > 0 && (
                   <button
-                    onClick={handleBulkDelete}
-                    className="px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
+                    onClick={handleBulkAiTag}
+                    disabled={bulkAiTagging}
+                    className="px-3 py-1.5 text-xs font-medium bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    title="Generate smart AI tags for selected sessions on-demand"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete Selected ({selectedIds.size})
+                    {bulkAiTagging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    <span>{bulkAiTagging ? 'AI Tagging...' : `AI Tag (${selectedIds.size})`}</span>
                   </button>
-                </div>
-              )}
+                )}
+
+                {selectedIds.size > 0 && (
+                  <>
+                    <button
+                      onClick={() => handleBulkArchive(viewTab === 'active')}
+                      className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
+                    >
+                      {viewTab === 'active' ? <Archive className="w-3.5 h-3.5" /> : <ArchiveRestore className="w-3.5 h-3.5" />}
+                      {viewTab === 'active' ? `Archive (${selectedIds.size})` : `Restore (${selectedIds.size})`}
+                    </button>
+
+                    <button
+                      onClick={handleBulkDelete}
+                      className="px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-xs flex items-center gap-1.5 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete Selected ({selectedIds.size})
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -555,6 +832,23 @@ export function HistoryDashboard({
                           <Globe className="w-3 h-3" /> Standard
                         </span>
                       )}
+
+                      {/* Broken Links Alert Badge on Card */}
+                      {getSessionBrokenCount(session) > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHealthCheckSession(session);
+                          }}
+                          className="bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/70 dark:hover:bg-rose-900/80 text-rose-700 dark:text-rose-300 text-xs font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 border border-rose-200 dark:border-rose-900/60 transition-colors"
+                          title="404/500 broken links detected! Click to inspect & clean up"
+                        >
+                          <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
+                          {getSessionBrokenCount(session)} Broken
+                        </button>
+                      )}
+
                       <h3 className="font-medium text-zinc-900 dark:text-zinc-100 truncate max-w-[180px] sm:max-w-[220px]" title={session.title}>
                         {session.title || 'Untitled Session'}
                       </h3>
@@ -565,16 +859,45 @@ export function HistoryDashboard({
                     </span>
                   </div>
 
-                  {session.tags && session.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mb-2.5">
-                      {session.tags.map(tag => (
-                        <span key={tag} className="inline-flex items-center text-[10px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">
-                          <Hash className="w-2.5 h-2.5 mr-0.5" />
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  {/* Tags and On-Demand Tagging Controls */}
+                  <div className="flex items-center flex-wrap gap-1.5 mb-3">
+                    {session.tags && session.tags.length > 0 && session.tags.map(tag => (
+                      <span key={tag} className="inline-flex items-center text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">
+                        <Hash className="w-2.5 h-2.5 mr-0.5" />
+                        {tag}
+                      </span>
+                    ))}
+
+                    {/* Add / Edit Tag Manually */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingTagsSession(session);
+                      }}
+                      className="inline-flex items-center text-[10px] text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 px-1.5 py-0.5 rounded transition-colors font-medium"
+                      title="Add or edit tags manually"
+                    >
+                      <Plus className="w-2.5 h-2.5 mr-0.5" />
+                      Tag
+                    </button>
+
+                    {/* AI Tagging On-Demand */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDirectAiTag(session, e)}
+                      disabled={aiTaggingSessionId === session.id}
+                      className="inline-flex items-center text-[10px] font-medium text-purple-600 dark:text-purple-400 hover:text-purple-700 bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 px-1.5 py-0.5 rounded transition-colors disabled:opacity-50"
+                      title="Scan content and auto-generate smart #tags with Gemini AI"
+                    >
+                      {aiTaggingSessionId === session.id ? (
+                        <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" />
+                      ) : (
+                        <Sparkles className="w-2.5 h-2.5 mr-0.5" />
+                      )}
+                      {aiTaggingSessionId === session.id ? 'Generating...' : 'AI Tag'}
+                    </button>
+                  </div>
 
                   <div className="space-y-1.5 mb-4 flex-1">
                     <div className="text-sm text-zinc-600 dark:text-zinc-400 line-clamp-1">
@@ -595,7 +918,40 @@ export function HistoryDashboard({
                       <GlobalExport session={session} />
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      {/* Session Health Check & Cleanup Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHealthCheckSession(session);
+                        }}
+                        className={cn(
+                          "p-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1",
+                          getSessionBrokenCount(session) > 0
+                            ? "text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 font-semibold"
+                            : "text-zinc-500 hover:text-rose-600 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        )}
+                        title="Inspect Session Health, scan 404/500 status codes, and clean up broken links"
+                      >
+                        <HeartPulse className="w-3.5 h-3.5 text-rose-500" />
+                      </button>
+
+                      {/* Compare Button on Card */}
+                      <button
+                        type="button"
+                        onClick={(e) => handleQuickCompare(session, e)}
+                        className={cn(
+                          "p-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1",
+                          comparePickId === session.id
+                            ? "text-indigo-600 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 ring-1 ring-indigo-500 font-semibold"
+                            : "text-zinc-500 hover:text-indigo-600 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        )}
+                        title={comparePickId === session.id ? "Selected for compare! Click another session card to view diff" : "Compare this session side-by-side"}
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5" />
+                      </button>
+
                       {/* Pin Toggle Button */}
                       {onTogglePinSession && (
                         <button
@@ -649,6 +1005,31 @@ export function HistoryDashboard({
           )}
         </div>
       </div>
+
+      {/* Manual & On-Demand AI Tag Editor Modal */}
+      {editingTagsSession && (
+        <TagEditModal
+          session={editingTagsSession}
+          onClose={() => setEditingTagsSession(null)}
+        />
+      )}
+
+      {/* Side-by-Side Session Comparison Modal */}
+      {compareSessions && (
+        <SessionCompareModal
+          sessionA={compareSessions[0]}
+          sessionB={compareSessions[1]}
+          onClose={() => setCompareSessions(null)}
+        />
+      )}
+
+      {/* Session Health & Broken Links Monitor Modal */}
+      {healthCheckSession && (
+        <SessionHealthModal
+          session={healthCheckSession}
+          onClose={() => setHealthCheckSession(null)}
+        />
+      )}
     </div>
   );
 }
