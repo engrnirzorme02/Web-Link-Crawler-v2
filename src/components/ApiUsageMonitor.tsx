@@ -24,7 +24,7 @@ const monthlyData = [
 
 export function ApiUsageMonitor() {
   const [tokenUsage, setTokenUsage] = useState(0);
-  const [model, setModel] = useState('gemini-2.5-flash');
+  const [model, setModel] = useState('Passive Mode (Offline)');
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'daily' | 'monthly'>('daily');
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -32,24 +32,16 @@ export function ApiUsageMonitor() {
   useEffect(() => {
     const handleUsageUpdate = (e: any) => {
       if (e.detail?.tokens) {
-        setTokenUsage(prev => {
-          const newUsage = prev + e.detail.tokens;
-          return newUsage;
-        });
+        setTokenUsage(0); // Kept at zero in Passive Mode
       }
       if (e.detail?.model) {
         setModel(e.detail.model);
       }
     };
     window.addEventListener('api-usage', handleUsageUpdate);
-    
-    const decayInterval = setInterval(() => {
-      setTokenUsage(prev => Math.max(0, prev - 1000));
-    }, 5000);
 
     return () => {
       window.removeEventListener('api-usage', handleUsageUpdate);
-      clearInterval(decayInterval);
     };
   }, []);
 
@@ -118,10 +110,10 @@ export function ApiUsageMonitor() {
           <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
             <div>
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-blue-500" />
-                API Consumption
+                <BarChart2 className="w-4 h-4 text-emerald-500" />
+                API Status: Passive Safe Mode
               </h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Gemini API Request Volume</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Automated Cloud Requests Canceled (0 Active Outbound Calls)</p>
             </div>
             <button onClick={() => setIsOpen(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
               <X className="w-4 h-4" />

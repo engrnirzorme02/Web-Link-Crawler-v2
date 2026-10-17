@@ -2,11 +2,12 @@ import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 
 interface VisualizerProps {
-  results: { url: string; source: string }[];
-  startUrl: string;
+  results: { url: string; source?: string }[];
+  startUrl?: string;
+  isCrawling?: boolean;
 }
 
-export function CrawlVisualizer({ results, startUrl }: VisualizerProps) {
+export function CrawlVisualizer({ results, startUrl = '', isCrawling }: VisualizerProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {

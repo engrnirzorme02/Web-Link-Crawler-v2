@@ -90,7 +90,9 @@ export const UI_BLUEPRINT = `# UI Blueprint (v${BLUEPRINT_VERSION}) - 100% Clone
 
 ### G. Android Native Architecture & Wireframe Specifications
 - **Material Design 3**: TopAppBar, OutlinedTextField, Slider depth controls, Chips, and ElevatedCards.
-- **Polite Crawling UX**: Politeness delay slider (100ms - 3000ms), regex include/exclude pattern matching.
+- **Session & Data Manager Modal (\`<CrawlerSessionManagerModal />\`)**: Save configurations & crawl results, restore prior sessions, and export multi-format archives (CSV, JSON, TXT, MD).
+- **Polite Crawling UX**: Politeness delay slider (100ms - 5000ms), regex include/exclude pattern matching.
+- **Domain & Subdomain Scope Locks**: Hard boundary restriction to prevent spider drift.
 - **Touch-Friendly Controls**: Minimum 48px touch targets, quick copy-to-clipboard button per URL card.
 - **Theme & Data Saver**: Dynamic dark/light mode toggle and bandwidth-saving asset filters.
 
@@ -173,10 +175,18 @@ export const DEV_BLUEPRINT = `# Developer Blueprint (v${BLUEPRINT_VERSION}) - 10
 ### D. Abort Controllers (Cancellable Requests)
 - Prevents rogue background requests when users navigate between tabs or halt operations.
 
+### E. Session Management & Multi-Format Exporter
+- \`CrawlerSessionManagerModal\`:
+  1. Saves current crawl settings (depth, delay, domain locks, regex) and results directly into Firestore.
+  2. Restores saved sessions, instantly populating inputs and result tables.
+  3. Exports crawled datasets into CSV, JSON, TXT, and Markdown files.
+  4. Supports offline session backup & restoration with JSON file import.
+
 ## 4. Android Core Crawler Architecture Specification
 - **Engine**: Kotlin Coroutines + Flow (cold stream emitting \`CrawledUrlItem\`).
 - **Algorithm**: Breadth-First Search (BFS) with \`ArrayDeque<Pair<String, Int>>\` and synchronized \`visitedUrls\` Set.
-- **Politeness Throttle**: Configurable \`delay(politenessDelayMs)\` (100ms - 3000ms) to respect target servers.
+- **Politeness Throttle**: Configurable \`delay(politenessDelayMs)\` (100ms - 5000ms) to respect target servers.
+- **Domain Locks**: \`restrictDomain\` parameter to restrict link extraction to base domain or subdomain.
 - **Filtering**: Regex include/exclude filters, same-domain constraints, and binary extension suppression (.png, .pdf, .zip).
 - **Error Tolerance**: Recovers gracefully from \`SocketTimeoutException\`, \`MalformedURLException\`, and SSL errors.
 

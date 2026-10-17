@@ -1,0 +1,6 @@
+{
+  "summary": "Full Architectural Blueprint and Evaluation Matrix for Web Link Crawler V2. Covers technology stack, subsystems, execution flows, Firestore schemas, mobile UX, security guardrails, direct export endpoints, and evaluation of user suggestions.",
+  "updatedAt": "2026-10-16T13:49:47.294391073Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

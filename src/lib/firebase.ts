@@ -68,7 +68,7 @@ export interface Session {
   id?: string;
   settings?: any;
   userId: string;
-  type: 'crawler' | 'extractor' | 'bulk' | 'ai_chat' | 'url_processor' | 'smart_crawler';
+  type: 'crawler' | 'extractor' | 'bulk' | 'ai_chat' | 'url_processor' | 'smart_crawler' | 'file_merge' | 'data_extractor' | 'scheduler';
   title: string;
   tags?: string[];
   isPinned?: boolean;
@@ -78,6 +78,91 @@ export interface Session {
   url?: string;
   instruction?: string;
   aiSummary?: string;
+  notes?: string;
   createdAt: any;
   updatedAt: any;
 }
+
+export interface CrawlSchedule {
+  id?: string;
+  userId: string;
+  name: string;
+  url: string;
+  mode: 'single' | 'subdir' | 'domain';
+  frequency: 'once' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+  scheduledTime?: string;
+  nextRunAt?: any;
+  lastRunAt?: any;
+  lastStatus?: 'success' | 'failed' | 'running' | 'idle';
+  lastResultCount?: number;
+  maxPages: number;
+  maxDepth: number;
+  enabled: boolean;
+  status?: 'active' | 'paused';
+  notifications: boolean;
+  notifyOnComplete?: boolean;
+  filters?: {
+    domainOnly?: boolean;
+    subdomains?: boolean;
+    fileTypes?: string;
+    includePatterns?: string;
+    excludePatterns?: string;
+    excludeExtensions?: string;
+    restrictDomain?: string;
+    customRegex?: string;
+  };
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface CrawlLog {
+  id?: string;
+  userId: string;
+  scheduleId?: string;
+  scheduleName?: string;
+  url: string;
+  mode: string;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  startedAt: any;
+  completedAt?: any;
+  executedAt?: any;
+  durationSeconds?: number;
+  duration?: number;
+  pagesCrawled: number;
+  linksFound: number;
+  errorsCount: number;
+  errorDetails?: string[];
+  errorMessage?: string | null;
+  resultsSnippet?: any[];
+  triggeredBy: 'schedule' | 'manual';
+  createdAt?: any;
+}
+
+export interface PageMetadata {
+  title?: string;
+  description?: string;
+  keywords?: string[];
+  canonical?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  ogType?: string;
+  twitterCard?: string;
+  author?: string;
+  h1?: string[];
+}
+
+export interface ExtractedEntities {
+  emails: string[];
+  phones: string[];
+  socialLinks: { platform: string; url: string }[];
+}
+
+export interface ParsedPageData {
+  url: string;
+  statusCode?: number;
+  timestamp?: string;
+  metadata?: PageMetadata;
+  entities: ExtractedEntities;
+}
+

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Download, Layers, Upload, Brain, Terminal, Trash2, FileText } from 'lucide-react';
-import { cn, truncateForFirestore, cleanAndSanitizeUrl } from '../lib/utils';
+import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
 import { createEventSourceConnection, fetchWithRetry } from '../lib/api';
 import { Session, db } from '../lib/firebase';
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
@@ -68,11 +68,27 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
       if (isCrawlingRef.current) {
         return;
       }
-      if (session.url) setUrl(session.url);
-      if (session.instruction) setInstruction(session.instruction);
-      if (session.results) setResults(session.results);
-      if (session.logs) setLogs(session.logs);
-      if (session.aiSummary) setAiSummary(session.aiSummary);
+      if (!session.type || session.type === 'smart_crawler') {
+        if (session.url) setUrl(session.url);
+        if (session.instruction) setInstruction(session.instruction);
+        if (session.results) {
+          const safeResults = (session.results || []).map((r: any) => {
+            if (typeof r === 'string') return { url: cleanAndSanitizeUrl(r), relevance: 'seed' };
+            return {
+              ...r,
+              url: cleanAndSanitizeUrl(r?.url || '')
+            };
+          }).filter((r: any) => Boolean(r.url));
+          setResults(safeResults);
+        }
+        if (session.logs) setLogs(session.logs);
+        if (session.aiSummary) setAiSummary(session.aiSummary);
+      } else {
+        setUrl('');
+        setInstruction('');
+        setResults([]);
+        setAiSummary('');
+      }
       setError('');
     } else if (!session) {
       if (isCrawlingRef.current) {
@@ -253,7 +269,7 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
     
     if (!activeSessionId && userId) {
       try {
-        const domain = new URL(validUrls[0]).hostname;
+        const domain = extractSafeHostname(validUrls[0], 'Website');
         const newSession: Session = truncateForFirestore({
           userId,
           type: 'smart_crawler',
@@ -313,7 +329,7 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
         
         const targetUrl = validUrls[i];
         addLog(`[${i+1}/${validUrls.length}] Starting smart crawl for: ${targetUrl}`);
-        setStatusMessage(`[${i+1}/${validUrls.length}] Smart crawling: ${new URL(targetUrl).hostname}...`);
+        setStatusMessage(`[${i+1}/${validUrls.length}] Smart crawling: ${extractSafeHostname(targetUrl)}...`);
 
         const query = new URLSearchParams({
           url: targetUrl,
@@ -727,21 +743,24 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
                         <LinkIcon className="w-5 h-5 text-blue-500" /> Source References
                       </h3>
                       <div className="space-y-2">
-                        {results.map((result, idx) => (
-                          <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors">
-                            <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-semibold text-xs shrink-0">
-                              {idx + 1}
+                        {results.map((result, idx) => {
+                          const displayUrl = typeof result?.url === 'string' ? result.url : String(result?.url || '');
+                          return (
+                            <div key={`smart-res-${idx}-${displayUrl}`} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors">
+                              <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-semibold text-xs shrink-0">
+                                {idx + 1}
+                              </div>
+                              <a 
+                                href={displayUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                className="flex-1 truncate text-sm text-zinc-800 dark:text-zinc-300 font-mono hover:text-blue-600 dark:hover:text-blue-400"
+                              >
+                                {displayUrl}
+                              </a>
                             </div>
-                            <a 
-                              href={result.url} 
-                              target="_blank" 
-                              rel="noopener noreferrer" 
-                              className="flex-1 truncate text-sm text-zinc-800 dark:text-zinc-300 font-mono hover:text-blue-600 dark:hover:text-blue-400"
-                            >
-                              {result.url}
-                            </a>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

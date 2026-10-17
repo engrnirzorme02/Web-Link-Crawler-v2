@@ -133,7 +133,17 @@ export default function Extractor({ session, userId, onSessionCreated }: Extract
   useEffect(() => {
     if (session && session.id !== loadedSessionIdRef.current) {
       // If we receive a session from props, update our local results
-      setResults(session.results || []);
+      if (!session.type || session.type === 'extractor') {
+        const rawResults = Array.isArray(session.results) ? session.results : [];
+        const cleanUrls = rawResults.map((r: any) => {
+          if (typeof r === 'string') return r.trim();
+          if (r && typeof r === 'object') return (r.url || r.link || r.href || '').trim();
+          return String(r || '').trim();
+        }).filter(Boolean);
+        setResults(cleanUrls);
+      } else {
+        setResults([]);
+      }
       loadedSessionIdRef.current = session.id;
     } else if (!session && loadedSessionIdRef.current) {
       // If session became null (e.g. clicking New Session)
@@ -422,28 +432,31 @@ export default function Extractor({ session, userId, onSessionCreated }: Extract
               </div>
             ) : (
               <div className="space-y-2 pb-32">
-                {results.slice(0, visibleCount).map((url, index) => (
-                  <div 
-                    key={index} 
-                    onClick={() => toggleSelection(url)}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer",
-                      selectedUrls.has(url)
-                        ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
-                        : "bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-transparent hover:border-zinc-200 dark:hover:border-zinc-700"
-                    )}
-                  >
-                    <input 
-                      type="checkbox" 
-                      checked={selectedUrls.has(url)}
-                      onChange={() => {}} // handled by parent div click
-                      className="w-4 h-4 rounded border-zinc-300 text-blue-600 focus:ring-blue-500 cursor-pointer pointer-events-none"
-                    />
-                    <div className="flex-1 truncate text-sm text-zinc-800 dark:text-zinc-300 font-mono">
-                      {url}
+                {results.slice(0, visibleCount).map((urlItem, index) => {
+                  const urlStr = typeof urlItem === 'string' ? urlItem : (urlItem && typeof urlItem === 'object' ? ((urlItem as any).url || JSON.stringify(urlItem)) : String(urlItem || ''));
+                  return (
+                    <div 
+                      key={`extractor-item-${index}-${urlStr}`} 
+                      onClick={() => toggleSelection(urlStr)}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-colors cursor-pointer",
+                        selectedUrls.has(urlStr)
+                          ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
+                          : "bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-transparent hover:border-zinc-200 dark:hover:border-zinc-700"
+                      )}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={selectedUrls.has(urlStr)}
+                        onChange={() => {}} // handled by parent div click
+                        className="w-4 h-4 rounded border-zinc-300 text-blue-600 focus:ring-blue-500 cursor-pointer pointer-events-none"
+                      />
+                      <div className="flex-1 truncate text-sm text-zinc-800 dark:text-zinc-300 font-mono">
+                        {urlStr}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 
                 {results.length > visibleCount && (
                   <div className="flex items-center gap-4 justify-center py-4 mt-2 border-t border-zinc-200 dark:border-zinc-800/50">

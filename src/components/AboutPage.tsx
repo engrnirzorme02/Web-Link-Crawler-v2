@@ -363,10 +363,44 @@ export function AboutPage({ onBack }: AboutPageProps) {
                   </div>
                   <div className="space-y-1">
                     <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                      Android Native Architecture Blueprint
+                      Android UI/UX & Session Management
                     </h4>
                     <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                      Kotlin Coroutine Flow BFS crawler, Jsoup HTML parser, OkHttpClient connection pool, Material 3 dynamic color tokens, and 48px touch targets.
+                      Material Design 3 Bottom Navigation bar, tactile Save/Load session manager, CSV/JSON URL export, and full cloud Firestore session synchronization.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feature 5: Advanced Crawling Strategies */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl p-5 hover:border-blue-300 dark:hover:border-blue-900/60 transition-colors">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                    <Sliders className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                      Advanced Crawling Strategies & Filters
+                    </h4>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                      Custom crawl depth & breadth limiting, domain/subdomain restrictions, crawl delay throttle (0-5000ms), and regex include/exclude pattern matching.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feature 6: Data Export & Backup */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl p-5 hover:border-amber-300 dark:hover:border-amber-900/60 transition-colors">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                    <Download className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                      Multi-Format Export & Local Backups
+                    </h4>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                      Export crawled URLs directly in CSV, JSON, TXT, or Markdown formats, with portable session backup and import capabilities.
                     </p>
                   </div>
                 </div>
@@ -531,6 +565,64 @@ export function AboutPage({ onBack }: AboutPageProps) {
                   <li className="flex items-start gap-2">
                     <Check className="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5" />
                     <span><strong>Data Saver:</strong> Toggle to avoid downloading image/binary assets on metered cellular data.</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Android Card 3: Session & Data Management */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200/90 dark:border-zinc-800/90 rounded-3xl p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                      Session & Data Management (Android Spec)
+                    </h4>
+                    <p className="text-xs text-zinc-500">Save, restore, and multi-format exports</p>
+                  </div>
+                </div>
+                <ul className="text-xs text-zinc-600 dark:text-zinc-400 space-y-2 leading-relaxed">
+                  <li className="flex items-start gap-2">
+                    <Check className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                    <span><strong>Multi-Format Exports:</strong> Download clean URLs in CSV, JSON, TXT, or Markdown formats on Android devices.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                    <span><strong>Session Manager Sheet:</strong> Android-style modal to save configurations, restore previous crawls, and export full backups.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                    <span><strong>Offline & Cloud Sync:</strong> Persistent Firestore database sync with automatic local fallback.</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Android Card 4: Advanced Crawling Strategy */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200/90 dark:border-zinc-800/90 rounded-3xl p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                    <Sliders className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                      Advanced Crawling Strategies
+                    </h4>
+                    <p className="text-xs text-zinc-500">Depth, domain restrictions & regex engine</p>
+                  </div>
+                </div>
+                <ul className="text-xs text-zinc-600 dark:text-zinc-400 space-y-2 leading-relaxed">
+                  <li className="flex items-start gap-2">
+                    <Check className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <span><strong>Boundary Restraints:</strong> Restrict to exact domain/subdomain with path prefix matching.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <span><strong>Depth & Breadth Sliders:</strong> Granular limits for mobile spiders to conserve battery and data.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <span><strong>Regex Include/Exclude:</strong> Fine-grained URL filtering using standard ECMAScript regular expressions.</span>
                   </li>
                 </ul>
               </div>

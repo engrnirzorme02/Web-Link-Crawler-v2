@@ -17,10 +17,17 @@ export const getMillis = (ts: any): number => {
 
 // Thoroughly sanitizes and cleans a single raw URL or markdown/bracketed string,
 // stripping markdown brackets [..](..), trailing punctuation, quotes, entity codes, etc.
-// Always returns a clean, valid URL starting with http:// or https://.
-export function cleanAndSanitizeUrl(rawUrl: string): string {
+export function cleanAndSanitizeUrl(rawUrl: any): string {
   if (!rawUrl) return '';
-  let str = String(rawUrl).trim();
+  let str = '';
+  if (typeof rawUrl === 'string') {
+    str = rawUrl.trim();
+  } else if (rawUrl && typeof rawUrl === 'object') {
+    str = String(rawUrl.url || rawUrl.link || rawUrl.href || '').trim();
+    if (!str) return '';
+  } else {
+    str = String(rawUrl).trim();
+  }
 
   // 1. Detect Markdown link syntax: [label](https://...) or [label](http://...)
   const mdMatch = str.match(/\[.*?\]\(\s*(https?:\/\/[^\s\)\"\'>]+)\s*\)/i);
@@ -211,3 +218,25 @@ export function truncateForFirestore(data: any): any {
   
   return truncated;
 }
+
+/**
+ * Safely extracts hostname from any raw, partial, multiline, or unformatted URL string
+ * without throwing TypeError: Invalid URL.
+ */
+export function extractSafeHostname(rawUrl: string, fallback = ''): string {
+  if (!rawUrl || typeof rawUrl !== 'string') return fallback;
+  const first = rawUrl.split('\n')[0].trim();
+  if (!first) return fallback;
+  try {
+    const formatted = first.startsWith('http://') || first.startsWith('https://')
+      ? first
+      : `https://${first}`;
+    const parsed = new URL(formatted);
+    return parsed.hostname || fallback;
+  } catch {
+    // Fallback: strip protocol and extract domain/path root safely
+    const clean = first.replace(/^[a-z]+:\/\//i, '').split('/')[0].split('?')[0].trim();
+    return clean.slice(0, 50) || fallback;
+  }
+}
+

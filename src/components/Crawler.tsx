@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info } from 'lucide-react';
-import { cn, truncateForFirestore, cleanAndSanitizeUrl } from '../lib/utils';
+import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info, FolderOpen, Shield, Mail, Phone, Share2, Network, CalendarClock, Code2, Sparkles } from 'lucide-react';
+import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
 import { createEventSourceConnection, fetchWithRetry, logNetworkEvent } from '../lib/api';
-import { Session, db } from '../lib/firebase';
+import { Session, db, ParsedPageData } from '../lib/firebase';
 import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { CrawlVisualizer } from './CrawlVisualizer';
+import { CrawlerSessionManagerModal } from './CrawlerSessionManagerModal';
+import { SessionNotesModal } from './SessionNotesModal';
+import { SitemapVisualizer } from './SitemapVisualizer';
+import { ContentEntitiesViewer } from './ContentEntitiesViewer';
 
 type CrawlMode = 'single' | 'subdir' | 'domain';
 
@@ -21,10 +25,12 @@ interface LogEntry {
 interface CrawlerProps {
   session: Session | null;
   userId: string | null;
+  allSessions?: Session[];
+  onSelectSession?: (session: Session) => void;
   onSessionCreated: (id: string) => void;
 }
 
-export default function Crawler({ session, userId, onSessionCreated }: CrawlerProps) {
+export default function Crawler({ session, userId, allSessions = [], onSelectSession, onSessionCreated }: CrawlerProps) {
   const [url, setUrl] = useState('');
   const [mode, setMode] = useState<CrawlMode>('domain');
   const [maxPages, setMaxPages] = useState('50');
@@ -41,8 +47,13 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
   const [verboseMode, setVerboseMode] = useState(false);
   const [keywordFilters, setKeywordFilters] = useState('');
   const [subdomainOnly, setSubdomainOnly] = useState(true);
+  const [restrictDomain, setRestrictDomain] = useState('');
+  const [crawlDelay, setCrawlDelay] = useState('0');
   const [extractAll, setExtractAll] = useState(true);
   const [fuzzPaths, setFuzzPaths] = useState(true);
+  const [customRegex, setCustomRegex] = useState('');
+  const [pageDataMap, setPageDataMap] = useState<Map<string, ParsedPageData>>(new Map());
+  const [resultsViewTab, setResultsViewTab] = useState<'urls' | 'sitemap' | 'entities' | 'graph'>('urls');
   
   const [isCrawling, setIsCrawling] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
@@ -51,6 +62,7 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
   const [error, setError] = useState('');
   const [copiedCategory, setCopiedCategory] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [sessionManagerOpen, setSessionManagerOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<'config' | 'results' | 'visualize'>('config');
   
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -67,6 +79,28 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [sessionTitle, setSessionTitle] = useState(session?.title || '');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
+  
+  // Real-time Crawl Progress & Performance Tracking
+  const [crawlStartTime, setCrawlStartTime] = useState<number | null>(null);
+  const [crawlElapsedSeconds, setCrawlElapsedSeconds] = useState(0);
+  const [batchTargetIndex, setBatchTargetIndex] = useState(0);
+  const [batchTotalTargets, setBatchTotalTargets] = useState(0);
+  const [crawlDone, setCrawlDone] = useState(false);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (isCrawling && crawlStartTime) {
+      interval = setInterval(() => {
+        setCrawlElapsedSeconds(Math.floor((Date.now() - crawlStartTime) / 1000));
+      }, 500);
+    } else if (!isCrawling && interval) {
+      clearInterval(interval);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isCrawling, crawlStartTime]);
   
   const [visibleResultCount, setVisibleResultCount] = useState(100);
 
@@ -232,12 +266,24 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
         return;
       }
 
-      const sanitizedSessionResults = (session.results || []).map(r => ({
-        ...r,
-        url: cleanAndSanitizeUrl(r.url)
-      })).filter(r => Boolean(r.url));
-      setResults(sanitizedSessionResults);
-      setStats(prev => ({ ...prev, totalLinks: sanitizedSessionResults.length }));
+      if (!session.type || session.type === 'crawler') {
+        const rawResults = Array.isArray(session.results) ? session.results : [];
+        const sanitizedSessionResults = rawResults.map((r: any) => {
+          if (typeof r === 'string') {
+            const u = cleanAndSanitizeUrl(r);
+            return { url: u, status: 200, depth: 0, source: 'seed' };
+          }
+          return {
+            ...r,
+            url: cleanAndSanitizeUrl(r?.url || '')
+          };
+        }).filter(r => Boolean(r.url));
+        setResults(sanitizedSessionResults);
+        setStats(prev => ({ ...prev, totalLinks: sanitizedSessionResults.length }));
+      } else {
+        setResults([]);
+        setStats(prev => ({ ...prev, totalLinks: 0 }));
+      }
       if (session.title) {
         setSessionTitle(session.title);
       }
@@ -259,6 +305,8 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
         setIncludePathPattern(session.settings.includePathPattern || '');
         setVerboseMode(session.settings.verboseMode ?? false);
         setSubdomainOnly(session.settings.subdomainOnly ?? true);
+        setRestrictDomain(session.settings.restrictDomain || '');
+        setCrawlDelay(session.settings.crawlDelay?.toString() || '0');
         setExtractAll(session.settings.extractAll ?? true);
         setFuzzPaths(session.settings.fuzzPaths ?? true);
       }
@@ -394,7 +442,9 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
     excludeDomains?: string, 
     includePathPattern?: string, 
     verboseMode?: boolean, 
-    keywordFilters?: string 
+    keywordFilters?: string,
+    restrictDomain?: string,
+    crawlDelay?: string
   }) => {
     let combinedText = url;
     if (attachedFiles.length > 0) {
@@ -479,6 +529,11 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
     // We clear logs and stats for the CURRENT run only.
     setLogs([]);
     setStats({ pagesCrawled: 0, totalLinks: results.length, errors: 0, queueLength: 0, currentUrl: '', currentDepth: 0 });
+    setCrawlStartTime(Date.now());
+    setCrawlElapsedSeconds(0);
+    setCrawlDone(false);
+    setBatchTargetIndex(1);
+    setBatchTotalTargets(validUrls.length);
     setIsCrawling(true);
     isCrawlingRef.current = true;
     
@@ -506,11 +561,13 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
     const currentIncludePathPattern = overrides?.includePathPattern ?? includePathPattern;
     const currentVerboseMode = overrides?.verboseMode ?? verboseMode;
     const currentKeywordFilters = overrides?.keywordFilters ?? keywordFilters;
+    const currentRestrictDomain = overrides?.restrictDomain ?? restrictDomain;
+    const currentCrawlDelay = overrides?.crawlDelay ?? crawlDelay;
 
     // Auto-create session if it doesn't exist and user is logged in
     if (!activeSessionId && userId) {
       try {
-        const domain = new URL(validUrls[0]).hostname;
+        const domain = extractSafeHostname(validUrls[0], 'Website');
         const newSession: Session = truncateForFirestore({
           userId,
           type: 'crawler',
@@ -523,6 +580,8 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
             maxPages: currentMaxPages,
             maxDepth: currentMaxDepth,
             maxBreadth: currentMaxBreadth,
+            crawlDelay: currentCrawlDelay,
+            restrictDomain: currentRestrictDomain,
             fileTypes: currentFileTypes,
             includePatterns: currentIncludePatterns,
             excludePatterns: currentExcludePatterns,
@@ -550,7 +609,7 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
     } else if (activeSessionId && userId) {
       // Update title and settings
       try {
-        const domain = new URL(validUrls[0]).hostname;
+        const domain = extractSafeHostname(validUrls[0], 'Website');
         setSaveStatus("saving"); await updateDoc(doc(db, 'sessions', activeSessionId), {
           title: sessionTitle || `Crawl: ${domain}${validUrls.length > 1 ? ` +${validUrls.length - 1} more` : ''} (Merged)`,
           url: url,
@@ -559,6 +618,8 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
             maxPages: currentMaxPages,
             maxDepth: currentMaxDepth,
             maxBreadth: currentMaxBreadth,
+            crawlDelay: currentCrawlDelay,
+            restrictDomain: currentRestrictDomain,
             fileTypes: currentFileTypes,
             includePatterns: currentIncludePatterns,
             excludePatterns: currentExcludePatterns,
@@ -589,8 +650,9 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
       if (!isCrawlingRef.current) break;
       
       const targetUrl = validUrls[i];
+      setBatchTargetIndex(i + 1);
       addLog(`[${i+1}/${validUrls.length}] Starting crawl for: ${targetUrl}`);
-      setStatusMessage(`[${i+1}/${validUrls.length}] Crawling: ${new URL(targetUrl).hostname}...`);
+      setStatusMessage(`[${i+1}/${validUrls.length}] Crawling: ${extractSafeHostname(targetUrl)}...`);
 
       const query = new URLSearchParams({
         url: targetUrl,
@@ -610,8 +672,14 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
         includeDomains: currentIncludeDomains.trim(),
         excludeDomains: currentExcludeDomains.trim(),
         includePathPattern: currentIncludePathPattern.trim(),
-        keywordFilters: currentKeywordFilters.trim()
+        keywordFilters: currentKeywordFilters.trim(),
+        restrictDomain: currentRestrictDomain.trim(),
+        crawlDelay: currentCrawlDelay.trim()
       });
+
+      if (customRegex.trim()) {
+        query.append('customRegex', customRegex.trim());
+      }
 
       let urlPagesCount = 0;
       let urlErrorsCount = 0;
@@ -656,6 +724,16 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
                   totalLinks: totalGlobalLinks
                 }));
               }
+            } else if (data.type === 'page_data') {
+              setPageDataMap(prev => {
+                const next = new Map(prev);
+                next.set(data.url, {
+                  url: data.url,
+                  metadata: data.metadata,
+                  entities: data.entities
+                });
+                return next;
+              });
             } else if (data.type === 'link') {
               const cleanedUrl = cleanAndSanitizeUrl(data.url);
               if (!cleanedUrl) return;
@@ -689,6 +767,7 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
       setStatusMessage(`Completed processing ${validUrls.length} URL(s).`);
       addLog(`Bulk crawl finished.`);
       setIsCrawling(false);
+      setCrawlDone(true);
       isCrawlingRef.current = false;
       
       if (activeSessionId && userId) {
@@ -827,11 +906,7 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
       const rawUrls = url.split('\n').map(u => u.trim()).filter(Boolean);
       if (rawUrls.length === 0) return { internal: results, subdomain: [], external: [] };
       
-      const startHostnames = rawUrls.map(u => {
-        let t = u;
-        if (!t.startsWith('http')) t = 'https://' + t;
-        try { return new URL(t).hostname; } catch { return null; }
-      }).filter(Boolean) as string[];
+      const startHostnames = rawUrls.map(u => extractSafeHostname(u)).filter(Boolean) as string[];
       
       if (startHostnames.length === 0) return { internal: results, subdomain: [], external: [] };
       
@@ -839,22 +914,16 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
 
       return {
         internal: results.filter(r => {
-          try { 
-            const h = new URL(r.url).hostname; 
-            return startHostnames.includes(h);
-          } catch { return false; }
+          const h = extractSafeHostname(r.url);
+          return Boolean(h && startHostnames.includes(h));
         }),
         subdomain: results.filter(r => {
-          try { 
-            const h = new URL(r.url).hostname; 
-            return !startHostnames.includes(h) && baseDomains.some(base => h.endsWith('.' + base)); 
-          } catch { return false; }
+          const h = extractSafeHostname(r.url);
+          return Boolean(h && !startHostnames.includes(h) && baseDomains.some(base => h.endsWith('.' + base)));
         }),
         external: results.filter(r => {
-          try {
-            const h = new URL(r.url).hostname;
-            return !startHostnames.includes(h) && !baseDomains.some(base => h.endsWith('.' + base));
-          } catch { return false; }
+          const h = extractSafeHostname(r.url);
+          return Boolean(h && !startHostnames.includes(h) && !baseDomains.some(base => h.endsWith('.' + base)));
         })
       };
     } catch {
@@ -907,6 +976,22 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
         )}>
           <div className="flex-1 md:overflow-y-auto p-5 md:p-6 space-y-6 custom-scrollbar">
             
+            {/* Quick Session Manager & Export Action Bar (Material Design 3 card style) */}
+            <div className="flex items-center justify-between p-2.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/50 rounded-2xl">
+              <div className="flex items-center gap-2 pl-1">
+                <FolderOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">Session & Data</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSessionManagerOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span>Save / Load / Export</span>
+              </button>
+            </div>
+
             {/* Target URL */}
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -1150,6 +1235,60 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
                     />
                   </div>
 
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5 flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5 text-blue-500" />
+                        <span>Restrict to Specific Domain / Subdomain</span>
+                      </label>
+                      <input 
+                        type="text" 
+                        placeholder="e.g. blog.example.com or example.com"
+                        value={restrictDomain}
+                        onChange={(e) => setRestrictDomain(e.target.value)}
+                        disabled={isCrawling}
+                        className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <p className="text-[10px] text-zinc-400 mt-1">Strict boundary: Discards discovered links that don't match this exact host.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">
+                        Polite Crawl Delay (ms)
+                      </label>
+                      <input 
+                        type="number" 
+                        min="0"
+                        max="10000"
+                        step="100"
+                        placeholder="0"
+                        value={crawlDelay}
+                        onChange={(e) => setCrawlDelay(e.target.value)}
+                        disabled={isCrawling}
+                        className="w-full bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <p className="text-[10px] text-zinc-400 mt-1">Delay between consecutive requests (e.g. 500ms to avoid rate limits).</p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900/40 rounded-xl">
+                    <label className="block text-xs font-semibold text-purple-900 dark:text-purple-300 mb-1 flex items-center gap-1.5">
+                      <Code2 className="w-3.5 h-3.5" />
+                      <span>Custom Path Filter Regex</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. ^https://example\.com/blog/.*"
+                      value={customRegex}
+                      onChange={(e) => setCustomRegex(e.target.value)}
+                      disabled={isCrawling}
+                      className="w-full bg-white dark:bg-zinc-900 border border-purple-200 dark:border-purple-800 rounded-lg px-3 py-2 text-xs font-mono text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    />
+                    <p className="text-[10px] text-purple-700/70 dark:text-purple-400/80 mt-1">
+                      Real-time crawler filter: Only links matching this regular expression will be queued and parsed.
+                    </p>
+                  </div>
+
                   <div>
                     <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1.5">Keyword Filters (Page Content - comma separated)</label>
                     <input 
@@ -1284,6 +1423,61 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
                 Stop Extraction
               </button>
             )}
+
+            {/* Visual Progress Bar (Left Column) */}
+            {(isCrawling || crawlDone) && (
+              <div className="mt-3 p-3.5 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/40 rounded-2xl space-y-2.5 shadow-2xs">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 font-semibold text-blue-900 dark:text-blue-200">
+                    {isCrawling ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 animate-spin" />
+                        <span>Crawling in progress...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>Crawl Completed</span>
+                      </>
+                    )}
+                  </div>
+                  <span className="font-bold text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-[11px]">
+                    {Math.min(100, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100))}%
+                  </span>
+                </div>
+
+                {/* Progress Track */}
+                <div className="h-2.5 w-full bg-blue-100 dark:bg-zinc-800 rounded-full overflow-hidden p-0.5 border border-blue-200/50 dark:border-zinc-700/50">
+                  <div 
+                    className={cn(
+                      "h-full rounded-full transition-all duration-300 bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500",
+                      isCrawling ? "animate-pulse" : ""
+                    )}
+                    style={{ width: `${Math.min(100, Math.max(isCrawling ? 4 : 0, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100)))}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400 font-medium">
+                  <span>
+                    {stats.pagesCrawled} / {(batchTotalTargets || 1) * (Number(maxPages) || 50)} pages
+                    {batchTotalTargets > 1 && ` (URL ${batchTargetIndex}/${batchTotalTargets})`}
+                  </span>
+                  {crawlElapsedSeconds > 0 && (
+                    <span>
+                      {Math.floor(crawlElapsedSeconds / 60)}:{(crawlElapsedSeconds % 60).toString().padStart(2, '0')}s
+                      {stats.pagesCrawled > 0 && ` (${(stats.pagesCrawled / Math.max(1, crawlElapsedSeconds)).toFixed(1)}/s)`}
+                    </span>
+                  )}
+                </div>
+
+                {stats.currentUrl && isCrawling && (
+                  <div className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate font-mono bg-white/80 dark:bg-zinc-900/80 px-2 py-1 rounded-lg border border-blue-100 dark:border-zinc-800">
+                    <span className="text-blue-500 font-semibold mr-1">URL:</span>
+                    {stats.currentUrl}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1316,7 +1510,7 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
               ) : (
                 <div className="flex items-center gap-2 min-w-0 group">
                   <span className="font-semibold text-sm text-zinc-800 dark:text-zinc-200 truncate">
-                    {sessionTitle || (url ? `Crawl: ${new URL(url).hostname}` : 'Active Crawl Workspace')}
+                    {sessionTitle || (url ? `Crawl: ${extractSafeHostname(url, 'Active Crawl Workspace')}` : 'Active Crawl Workspace')}
                   </span>
                   {session?.id && (
                     <button onClick={() => setIsEditingTitle(true)} className="opacity-60 hover:opacity-100 p-1 text-zinc-400 hover:text-zinc-600 transition-opacity" title="Rename Session">
@@ -1328,6 +1522,25 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
             </div>
 
             <div className="flex items-center gap-2 text-xs font-medium text-zinc-500 shrink-0">
+              <button
+                type="button"
+                onClick={() => setNotesModalOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors shadow-xs"
+                title="Session Rich-Text Notes"
+              >
+                <FileText className={cn("w-3.5 h-3.5", session?.notes ? "text-amber-500" : "text-zinc-400")} />
+                <span>Notes</span>
+                {session?.notes && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionManagerOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors shadow-xs"
+                title="Manage Sessions and Export"
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-blue-500" />
+                <span>Sessions & Export</span>
+              </button>
               {saveStatus === 'saving' && <span className="flex items-center gap-1 text-blue-500"><Loader2 className="w-3 h-3 animate-spin" /> Syncing</span>}
               {saveStatus === 'saved' && <span className="flex items-center gap-1 text-emerald-500"><Cloud className="w-3 h-3" /> Saved</span>}
               {saveStatus === 'error' && <span className="flex items-center gap-1 text-red-500"><CloudOff className="w-3 h-3" /> Sync Failed</span>}
@@ -1335,29 +1548,79 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
             </div>
           </div>
 
-          {/* Visual Progress Bar when crawling */}
-          {isCrawling && (
-            <div className="bg-blue-50/80 dark:bg-blue-950/40 border-b border-blue-200 dark:border-blue-900/50 px-4 py-2.5 shrink-0">
-              <div className="flex items-center justify-between text-xs mb-1.5">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-medium text-blue-700 dark:text-blue-300 flex items-center gap-1.5 shrink-0">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Crawling target
-                  </span>
-                  {stats.currentUrl && (
-                    <span className="text-zinc-500 dark:text-zinc-400 truncate max-w-xs md:max-w-md font-mono text-[11px]">
-                      {stats.currentUrl}
-                    </span>
-                  )}
+          {/* Visual Progress Bar (Right Column - Real-time Progress Status Card) */}
+          {(isCrawling || crawlDone) && (
+            <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-white dark:from-blue-950/40 dark:via-zinc-900 dark:to-zinc-900 border-b border-blue-200/80 dark:border-blue-900/50 p-3.5 md:p-4 shrink-0 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={cn(
+                    "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-xs",
+                    isCrawling ? "bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400" : "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400"
+                  )}>
+                    {isCrawling ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                        {isCrawling ? 'Crawling Target Stream' : 'Crawl Batch Finished'}
+                      </h4>
+                      {batchTotalTargets > 0 && (
+                        <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">
+                          Target {batchTargetIndex} / {batchTotalTargets}
+                        </span>
+                      )}
+                    </div>
+                    {stats.currentUrl && isCrawling ? (
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate max-w-sm md:max-w-xl font-mono mt-0.5">
+                        Active URL: {stats.currentUrl}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                        {statusMessage}
+                      </p>
+                    )}
+                  </div>
                 </div>
-                <span className="font-semibold text-blue-700 dark:text-blue-300 shrink-0 pl-2">
-                  {Math.min(100, Math.round((stats.pagesCrawled / Math.max(1, Number(maxPages) || 50)) * 100))}%
-                </span>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 font-medium">
+                      {stats.pagesCrawled} / {(batchTotalTargets || 1) * (Number(maxPages) || 50)} pgs
+                    </span>
+                    <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-1">
+                      <LinkIcon className="w-3 h-3 text-emerald-500" />
+                      <span>{stats.totalLinks} links</span>
+                    </span>
+                    {stats.errors > 0 && (
+                      <span className="px-2 py-1 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-300 font-medium flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 text-red-500" />
+                        <span>{stats.errors}</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="text-right pl-2 border-l border-zinc-200 dark:border-zinc-800">
+                    <span className="text-sm font-black text-blue-600 dark:text-blue-400">
+                      {Math.min(100, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100))}%
+                    </span>
+                    {crawlElapsedSeconds > 0 && (
+                      <div className="text-[10px] text-zinc-400">
+                        {Math.floor(crawlElapsedSeconds / 60)}:{(crawlElapsedSeconds % 60).toString().padStart(2, '0')}s
+                        {stats.pagesCrawled > 0 && ` (${(stats.pagesCrawled / Math.max(1, crawlElapsedSeconds)).toFixed(1)}/s)`}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="w-full bg-blue-200 dark:bg-blue-900/60 rounded-full h-2 overflow-hidden">
+
+              {/* Real-time Visual Progress Track */}
+              <div className="w-full bg-blue-100 dark:bg-zinc-800 rounded-full h-2.5 overflow-hidden p-0.5 border border-blue-200/60 dark:border-zinc-700/60">
                 <div 
-                  className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full transition-all duration-300 animate-pulse"
-                  style={{ width: `${Math.min(100, Math.max(5, Math.round((stats.pagesCrawled / Math.max(1, Number(maxPages) || 50)) * 100)))}%` }}
+                  className={cn(
+                    "bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 h-full rounded-full transition-all duration-300",
+                    isCrawling ? "animate-pulse" : ""
+                  )}
+                  style={{ width: `${Math.min(100, Math.max(isCrawling ? 3 : 0, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100)))}%` }}
                 />
               </div>
             </div>
@@ -1392,6 +1655,92 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
             </div>
           </div>
 
+          {/* Results View Switcher Tab Bar */}
+          <div className="bg-zinc-100/80 dark:bg-zinc-800/60 border-b border-zinc-200 dark:border-zinc-800 px-4 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-1.5 bg-white dark:bg-zinc-900 p-1 rounded-xl border border-zinc-200 dark:border-zinc-700/60 text-xs">
+              <button
+                type="button"
+                onClick={() => setResultsViewTab('urls')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5",
+                  resultsViewTab === 'urls' 
+                    ? "bg-blue-600 text-white shadow-2xs" 
+                    : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+                )}
+              >
+                <LinkIcon className="w-3.5 h-3.5" />
+                URLs List ({results.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setResultsViewTab('sitemap')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5",
+                  resultsViewTab === 'sitemap' 
+                    ? "bg-blue-600 text-white shadow-2xs" 
+                    : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+                )}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                Sitemap & Hierarchy
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setResultsViewTab('entities')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5",
+                  resultsViewTab === 'entities' 
+                    ? "bg-blue-600 text-white shadow-2xs" 
+                    : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+                )}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Entities & Metadata {pageDataMap.size > 0 && `(${pageDataMap.size})`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setResultsViewTab('graph')}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5",
+                  resultsViewTab === 'graph' 
+                    ? "bg-blue-600 text-white shadow-2xs" 
+                    : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+                )}
+              >
+                <Network className="w-3.5 h-3.5" />
+                Link Network Graph
+              </button>
+            </div>
+          </div>
+
+          {resultsViewTab === 'sitemap' && (
+            <div className="flex-1 p-4 overflow-y-auto bg-zinc-50 dark:bg-zinc-950">
+              <SitemapVisualizer 
+                results={results} 
+                initialUrl={url.split('\n')[0] || undefined} 
+              />
+            </div>
+          )}
+
+          {resultsViewTab === 'entities' && (
+            <div className="flex-1 p-4 overflow-y-auto bg-zinc-50 dark:bg-zinc-950">
+              <ContentEntitiesViewer 
+                pageDataMap={pageDataMap} 
+                results={results} 
+              />
+            </div>
+          )}
+
+          {resultsViewTab === 'graph' && (
+            <div className="flex-1 overflow-hidden relative bg-white dark:bg-zinc-950">
+              <CrawlVisualizer results={results} isCrawling={isCrawling} />
+            </div>
+          )}
+
+          {resultsViewTab === 'urls' && (
           <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
             {/* Links Results */}
             <div className="flex-1 flex flex-col border-b md:border-b-0 md:border-r border-zinc-200 dark:border-zinc-800 overflow-hidden relative">
@@ -1639,6 +1988,7 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
               </div>
             </div>
           </div>
+          )}
         </div>
       </div>
       
@@ -1652,6 +2002,13 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
           <span className="text-[10px] font-semibold uppercase tracking-wider">Config</span>
         </button>
         <button 
+          onClick={() => setSessionManagerOpen(true)}
+          className="flex-1 py-3 flex flex-col items-center justify-center gap-1 transition-colors text-zinc-500 dark:text-zinc-400 hover:text-blue-600"
+        >
+          <FolderOpen className="w-5 h-5" />
+          <span className="text-[10px] font-semibold uppercase tracking-wider">Sessions</span>
+        </button>
+        <button 
           onClick={() => setMobileTab('results')}
           className={cn("flex-1 py-3 flex flex-col items-center justify-center gap-1 transition-colors", mobileTab === 'results' ? "text-blue-600" : "text-zinc-500 dark:text-zinc-400")}
         >
@@ -1659,6 +2016,49 @@ export default function Crawler({ session, userId, onSessionCreated }: CrawlerPr
           <span className="text-[10px] font-semibold uppercase tracking-wider">Results</span>
         </button>
       </div>
+
+      {/* Crawler Session Manager Modal for Android UI/UX */}
+      <CrawlerSessionManagerModal
+        isOpen={sessionManagerOpen}
+        onClose={() => setSessionManagerOpen(false)}
+        userId={userId}
+        sessions={allSessions}
+        activeSession={session}
+        currentSettings={{
+          url,
+          mode,
+          maxPages,
+          maxDepth,
+          maxBreadth,
+          crawlDelay,
+          restrictDomain,
+          includePatterns,
+          excludePatterns,
+          fileTypes,
+          subdomainOnly,
+          extractAll,
+          fuzzPaths,
+          verboseMode,
+        }}
+        currentResults={results}
+        onLoadSession={(loadedSession) => {
+          if (onSelectSession) {
+            onSelectSession(loadedSession);
+          }
+          setSessionManagerOpen(false);
+        }}
+        onExportCurrent={(format) => {
+          handleExport(format);
+        }}
+      />
+
+      {/* Session Notes Modal */}
+      <SessionNotesModal
+        isOpen={notesModalOpen}
+        onClose={() => setNotesModalOpen(false)}
+        session={session}
+        userId={userId}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { cn, truncateForFirestore } from '../lib/utils';
 import { fetchWithRetry } from '../lib/api';
 import { db, Session } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { SessionNotesModal } from './SessionNotesModal';
 
 interface BulkFetcherProps {
   session?: Session | null;
@@ -21,6 +22,10 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
   
   const [logs, setLogs] = useState<{ time: string; message: string; type?: 'error' | 'success' | 'info' | 'warning' }[]>([]);
   const [progress, setProgress] = useState({ processed: 0, total: 0 });
+  const [currentProcessingUrl, setCurrentProcessingUrl] = useState('');
+  const [fetchStartTime, setFetchStartTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [error, setError] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
@@ -64,10 +69,29 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
       return;
     }
     if (session) {
-      setResults(session.results || []);
-      setLogs(session.logs || []);
-      resultsRef.current = session.results || [];
-      logsRef.current = session.logs || [];
+      if (!session.type || session.type === 'bulk') {
+        const rawResults = Array.isArray(session.results) ? session.results : [];
+        const sanitizedResults = rawResults.map((r: any) => {
+          if (typeof r === 'string') {
+            return { url: r, content: '', category: 'General' };
+          }
+          return {
+            url: typeof r?.url === 'string' ? r.url : String(r?.url || ''),
+            content: typeof r?.content === 'string' ? r.content : String(r?.content || ''),
+            category: typeof r?.category === 'string' ? r.category : 'General'
+          };
+        }).filter((r: any) => Boolean(r.url));
+
+        setResults(sanitizedResults);
+        setLogs(session.logs || []);
+        resultsRef.current = sanitizedResults;
+        logsRef.current = session.logs || [];
+      } else {
+        setResults([]);
+        setLogs([]);
+        resultsRef.current = [];
+        logsRef.current = [];
+      }
     } else {
       setResults([]);
       setLogs([]);
@@ -76,6 +100,21 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
       setInputUrls('');
     }
   }, [session]);
+
+  // Track elapsed time during fetching
+  useEffect(() => {
+    let interval: any = null;
+    if (isFetching && fetchStartTime) {
+      interval = setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - fetchStartTime) / 1000));
+      }, 500);
+    } else if (!isFetching) {
+      if (interval) clearInterval(interval);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isFetching, fetchStartTime]);
 
   const saveToFirebase = async (currentResults: any[], currentLogs: any[]) => {
     if (!userId) return;
@@ -197,6 +236,9 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
     resultsRef.current = [];
     logsRef.current = [];
     setProgress({ processed: 0, total: urlsToFetch.length });
+    setFetchStartTime(Date.now());
+    setElapsedSeconds(0);
+    setCurrentProcessingUrl(urlsToFetch[0] || '');
     setIsFetching(true);
     addLog(`Starting extraction for ${urlsToFetch.length} URLs...`, 'info');
 
@@ -236,21 +278,27 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
               
               if (data.type === 'progress') {
                 setProgress({ processed: data.processed, total: data.total });
+                if (data.currentUrl) setCurrentProcessingUrl(data.currentUrl);
               } else if (data.type === 'content') {
+                setCurrentProcessingUrl(data.url);
                 const newResult = { url: data.url, content: data.content, category: data.category };
                 setResults(prev => [...prev, newResult]);
                 resultsRef.current.push(newResult);
                 addLog(`Success (${data.category}): ${data.url}`, 'success');
               } else if (data.type === 'auth_required') {
+                setCurrentProcessingUrl(data.url);
                 setAuthRequired(prev => [...prev, { url: data.url, status: data.status }]);
                 addLog(`Auth Required (${data.status}): ${data.url}`, 'warning');
               } else if (data.type === 'ignored') {
+                setCurrentProcessingUrl(data.url);
                 setIgnored(prev => [...prev, { url: data.url, reason: data.reason }]);
                 addLog(`Ignored: ${data.url} - ${data.reason}`, 'info');
               } else if (data.type === 'error') {
+                if (data.url) setCurrentProcessingUrl(data.url);
                 setIgnored(prev => [...prev, { url: data.url, reason: data.error }]);
                 addLog(`Failed: ${data.url} - ${data.error}`, 'error');
               } else if (data.type === 'done') {
+                setCurrentProcessingUrl('');
                 addLog('Extraction completed.', 'info');
               }
             } catch (err) {
@@ -315,7 +363,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
   };
 
   const downloadCategory = (category: string) => {
-    const categoryResults = results.filter(r => r.category === category);
+    const categoryResults = results.filter(r => (r.category || 'General') === category);
     if (categoryResults.length === 0) return;
     
     let fileName = `extracted_${category.toLowerCase()}_data.txt`;
@@ -339,7 +387,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
   };
 
   const categories = useMemo(() => {
-    return Array.from(new Set(results.map(r => r.category))).sort();
+    return Array.from(new Set(results.map(r => r.category || 'General'))).sort();
   }, [results]);
 
   return (
@@ -347,14 +395,28 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
       
       {/* Left Column: Input Config */}
       <div className="w-full md:w-[320px] lg:w-[360px] border-b md:border-b-0 md:border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 flex flex-col shrink-0 min-h-0">
-        <div className="p-4 md:p-5 border-b border-zinc-200 dark:border-zinc-800 flex-none">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-            <Globe className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-            Bulk Extractor
-          </h2>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-            Process multiple URLs. Bypasses protections if headers are provided. Merges data by category.
-          </p>
+        <div className="p-4 md:p-5 border-b border-zinc-200 dark:border-zinc-800 flex-none flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+              <Globe className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              Bulk Extractor
+            </h2>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+              Process multiple URLs. Bypasses protections if headers are provided. Merges data by category.
+            </p>
+          </div>
+          {session && (
+            <button
+              type="button"
+              onClick={() => setNotesModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-xs font-semibold transition-colors shadow-2xs shrink-0"
+              title="Session Rich-Text Notes"
+            >
+              <FileText className={cn("w-3.5 h-3.5", session.notes ? "text-amber-500" : "text-zinc-400")} />
+              <span>Notes</span>
+              {session.notes && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />}
+            </button>
+          )}
         </div>
 
         <div className="flex-1 p-4 md:p-5 overflow-y-auto space-y-4 custom-scrollbar">
@@ -396,7 +458,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
             {attachedFiles.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {attachedFiles.map((file, idx) => (
-                  <div key={idx} className="flex items-center gap-1.5 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800/30 text-xs">
+                  <div key={`bulk-file-${file.name}-${idx}`} className="flex items-center gap-1.5 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800/30 text-xs">
                     <FileText className="w-3 h-3" />
                     <span className="max-w-[120px] truncate">{file.name}</span>
                     <button 
@@ -438,19 +500,56 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
             </button>
           )}
 
-          {/* Progress */}
-          {progress.total > 0 && (
-            <div className="space-y-1.5 pt-2">
-              <div className="flex justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-medium">
-                <span>Progress</span>
-                <span>{progress.processed} / {progress.total} URLs</span>
+          {/* Visual Progress Bar (Left Column) */}
+          {(progress.total > 0 || isFetching) && (
+            <div className="p-3.5 bg-gradient-to-br from-indigo-50/90 to-purple-50/50 dark:from-indigo-950/40 dark:to-purple-950/20 border border-indigo-200/80 dark:border-indigo-800/40 rounded-2xl space-y-2.5 shadow-xs">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-indigo-900 dark:text-indigo-200">
+                  {isFetching ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 animate-spin" />
+                      <span>Fetching URLs...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>Batch Completed</span>
+                    </>
+                  )}
+                </div>
+                <span className="font-bold text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/60 text-[11px]">
+                  {progress.total > 0 ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : 0}%
+                </span>
               </div>
-              <div className="h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+
+              {/* Progress Track */}
+              <div className="h-2.5 w-full bg-indigo-100 dark:bg-zinc-800 rounded-full overflow-hidden p-0.5 border border-indigo-200/50 dark:border-zinc-700/50">
                 <div 
-                  className="h-full bg-indigo-500 transition-all duration-300"
-                  style={{ width: `${(progress.processed / progress.total) * 100}%` }}
+                  className={cn(
+                    "h-full rounded-full transition-all duration-300 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-500",
+                    isFetching ? "animate-pulse" : ""
+                  )}
+                  style={{ width: `${progress.total > 0 ? Math.max(isFetching ? 4 : 0, Math.min(100, (progress.processed / progress.total) * 100)) : 0}%` }}
                 />
               </div>
+
+              {/* Stats & Current Target */}
+              <div className="flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400 font-medium">
+                <span>{progress.processed} of {progress.total} URLs</span>
+                {elapsedSeconds > 0 && (
+                  <span>
+                    {Math.floor(elapsedSeconds / 60)}:{(elapsedSeconds % 60).toString().padStart(2, '0')}s
+                    {progress.processed > 0 && ` (${(progress.processed / Math.max(1, elapsedSeconds)).toFixed(1)}/s)`}
+                  </span>
+                )}
+              </div>
+
+              {currentProcessingUrl && isFetching && (
+                <div className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate font-mono bg-white/70 dark:bg-zinc-900/70 px-2 py-1 rounded-lg border border-indigo-100 dark:border-zinc-800">
+                  <span className="text-indigo-500 font-semibold mr-1">Active:</span>
+                  {currentProcessingUrl}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -458,6 +557,85 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
 
       {/* Right Column: 4 Panels */}
       <div className="flex-1 flex flex-col bg-zinc-50/50 dark:bg-zinc-950/50 md:overflow-hidden relative p-4 md:p-5 lg:p-6 min-h-0">
+        
+        {/* Visual Progress Bar (Right Column - Real-time Status Card) */}
+        {(isFetching || progress.total > 0) && (
+          <div className="mb-4 bg-white dark:bg-zinc-900 border border-indigo-200/90 dark:border-indigo-900/60 rounded-2xl p-4 shadow-sm space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className={cn(
+                  "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-xs",
+                  isFetching ? "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400" : "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400"
+                )}>
+                  {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                      {isFetching ? 'Processing Bulk URL Batch' : 'Batch Extraction Completed'}
+                    </h4>
+                    <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300">
+                      {progress.processed} / {progress.total} URLs
+                    </span>
+                  </div>
+                  {currentProcessingUrl && isFetching ? (
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate max-w-md font-mono mt-0.5">
+                      Fetching: {currentProcessingUrl}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Extracted {results.length} valid items across {categories.length} categories
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Metrics Breakdown Pills */}
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-1" title="Valid Links">
+                    <CheckCircle className="w-3 h-3 text-emerald-500" />
+                    <span>{results.length}</span>
+                  </span>
+                  {authRequired.length > 0 && (
+                    <span className="px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium flex items-center gap-1" title="Auth Required (401/403)">
+                      <Key className="w-3 h-3 text-amber-500" />
+                      <span>{authRequired.length}</span>
+                    </span>
+                  )}
+                  {ignored.length > 0 && (
+                    <span className="px-2 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium flex items-center gap-1" title="Ignored / Errors">
+                      <FileX className="w-3 h-3 text-zinc-400" />
+                      <span>{ignored.length}</span>
+                    </span>
+                  )}
+                </div>
+
+                <div className="text-right pl-2 border-l border-zinc-200 dark:border-zinc-800">
+                  <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">
+                    {progress.total > 0 ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : 0}%
+                  </span>
+                  {elapsedSeconds > 0 && (
+                    <div className="text-[10px] text-zinc-400">
+                      {Math.floor(elapsedSeconds / 60)}:{(elapsedSeconds % 60).toString().padStart(2, '0')}s
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Progress Bar with gradient */}
+            <div className="w-full bg-zinc-100 dark:bg-zinc-800 rounded-full h-2.5 overflow-hidden p-0.5 border border-zinc-200/60 dark:border-zinc-700/60">
+              <div 
+                className={cn(
+                  "bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 h-full rounded-full transition-all duration-300",
+                  isFetching ? "animate-pulse" : ""
+                )}
+                style={{ width: `${progress.total > 0 ? Math.max(isFetching ? 3 : 0, Math.min(100, (progress.processed / progress.total) * 100)) : 0}%` }}
+              />
+            </div>
+          </div>
+        )}
         
         {/* Valid Data Links (Top Half) */}
         <div className="flex-1 min-h-[220px] flex flex-col border border-zinc-200 dark:border-zinc-800 rounded-2xl overflow-hidden bg-white dark:bg-zinc-900 mb-4 md:mb-5 shadow-sm">
@@ -484,11 +662,11 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
                   <p className="text-zinc-400 dark:text-zinc-500 text-xs mt-1">Enter target URLs on the left and click "Start Extraction"</p>
                 </div>
              ) : (
-                categories.map(cat => (
-                  <div key={cat} className="space-y-2.5">
+                categories.map((cat, catIdx) => (
+                  <div key={`bulk-cat-${cat}-${catIdx}`} className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <h4 className="text-xs font-bold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 px-2.5 py-1 rounded-lg w-fit border border-indigo-100/30">
-                        {cat} ({results.filter(r => r.category === cat).length})
+                        {cat} ({results.filter(r => (r.category || 'General') === cat).length})
                       </h4>
                       <button
                         onClick={() => downloadCategory(cat)}
@@ -499,8 +677,8 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
                       </button>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                       {results.filter(r => r.category === cat).slice(0, visibleResultCount).map((item, idx) => (
-                         <div key={idx} className="flex flex-col bg-zinc-50 dark:bg-zinc-900/40 p-2.5 rounded-xl border border-zinc-200/50 dark:border-zinc-800/50 shadow-sm">
+                       {results.filter(r => (r.category || 'General') === cat).slice(0, visibleResultCount).map((item, idx) => (
+                         <div key={`bulk-res-${cat}-${item.url || idx}-${idx}`} className="flex flex-col bg-zinc-50 dark:bg-zinc-900/40 p-2.5 rounded-xl border border-zinc-200/50 dark:border-zinc-800/50 shadow-sm">
                            <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 truncate">{item.url}</span>
                            <span className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate mt-1 bg-white dark:bg-zinc-900 px-1.5 py-1 rounded border border-zinc-100 dark:border-zinc-800/50 font-mono">
                              {(item.content || '').substring(0, 120)}...
@@ -508,7 +686,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
                          </div>
                        ))}
                     </div>
-                    {results.filter(r => r.category === cat).length > visibleResultCount && (
+                    {results.filter(r => (r.category || 'General') === cat).length > visibleResultCount && (
                       <div className="flex items-center justify-center gap-4 py-2 mt-2">
                         <button 
                           onClick={() => setVisibleResultCount(p => p + 50)}
@@ -546,7 +724,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
                   </div>
                 ) : (
                   authRequired.map((item, idx) => (
-                    <div key={idx} className="text-xs flex items-center gap-2 bg-amber-50/30 dark:bg-amber-950/5 p-1.5 rounded-lg border border-amber-100/20">
+                    <div key={`bulk-auth-${item.url}-${item.status}-${idx}`} className="text-xs flex items-center gap-2 bg-amber-50/30 dark:bg-amber-950/5 p-1.5 rounded-lg border border-amber-100/20">
                       <span className="text-amber-600 dark:text-amber-400 font-bold font-mono text-[10px] bg-amber-100 dark:bg-amber-950/50 px-1.5 py-0.5 rounded shrink-0">{item.status}</span>
                       <span className="text-zinc-600 dark:text-zinc-400 truncate text-[11px] font-medium">{item.url}</span>
                     </div>
@@ -568,7 +746,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
                   </div>
                 ) : (
                   ignored.map((item, idx) => (
-                    <div key={idx} className="text-xs flex flex-col p-1.5 bg-zinc-50 dark:bg-zinc-900/40 rounded-lg border border-zinc-100 dark:border-zinc-800/30">
+                    <div key={`bulk-ignored-${item.url}-${idx}`} className="text-xs flex flex-col p-1.5 bg-zinc-50 dark:bg-zinc-900/40 rounded-lg border border-zinc-100 dark:border-zinc-800/30">
                       <span className="text-zinc-700 dark:text-zinc-300 truncate text-[11px] font-medium">{item.url}</span>
                       <span className="text-red-500 dark:text-red-400 text-[9px] mt-0.5 font-mono">{item.reason}</span>
                     </div>
@@ -594,7 +772,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
                   </div>
                 ) : (
                   logs.map((log, i) => (
-                    <div key={i} className="flex gap-2">
+                    <div key={`bulk-log-${log.time}-${i}`} className="flex gap-2">
                       <span className="text-zinc-500 shrink-0">{log.time.split(' ')[0]}</span>
                       <span className={cn(
                         "break-all",
@@ -615,6 +793,14 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
         </div>
 
       </div>
+
+      {/* Session Notes Modal */}
+      <SessionNotesModal
+        isOpen={notesModalOpen}
+        onClose={() => setNotesModalOpen(false)}
+        session={session || null}
+        userId={userId}
+      />
     </div>
   );
 }

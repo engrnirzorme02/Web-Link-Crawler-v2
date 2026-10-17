@@ -25,6 +25,26 @@ service cloud.firestore {
       );
     }
 
+    match /crawl_schedules/{scheduleId} {
+      allow get, list: if isAuthenticated() && (
+        !('userId' in resource.data) || resource.data.userId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        !('userId' in resource.data) || resource.data.userId == request.auth.uid
+      );
+    }
+
+    match /crawl_logs/{logId} {
+      allow get, list: if isAuthenticated() && (
+        !('userId' in resource.data) || resource.data.userId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && (
+        !('userId' in resource.data) || resource.data.userId == request.auth.uid
+      );
+    }
+
     match /blueprint_access_logs/{logId} {
       allow create: if true;
       allow read, update, delete: if false;
