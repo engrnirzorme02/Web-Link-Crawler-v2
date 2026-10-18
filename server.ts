@@ -6,6 +6,13 @@ import * as cheerio from 'cheerio';
 import { URL } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import https from 'https';
+import {
+  smartExtractPageContent,
+  cleanAndExtractStructuredContent,
+  resolveAndFetchUrl,
+  renderWithHeadlessBrowser,
+  isClientSideSpaShell
+} from './server/htmlExtractor';
 
 // ==============================================================================
 // GEMINI MULTI-KEY ROTATION & AUTO-FAILOVER POOL

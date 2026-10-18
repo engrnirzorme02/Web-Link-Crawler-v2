@@ -162,57 +162,65 @@ export function extractCleanUrlsFromText(text: string): string[] {
 }
 
 export function truncateForFirestore(data: any): any {
+  if (!data || typeof data !== 'object') return data;
+  
   const jsonStr = JSON.stringify(data);
   const size = new Blob([jsonStr]).size;
   
   // Firestore hard limit per document is 1,048,576 bytes (1 MiB).
-  // If data is under 900KB, keep 100% of all items without any truncation!
-  if (size < 900000) {
+  // If data is under 920KB, keep 100% of all page text and items without any truncation!
+  if (size < 920000) {
     return data;
   }
   
-  // If document exceeds 900KB, create a copy and perform progressive trimming
+  // If document exceeds 920KB, create a copy and perform progressive trimming
   let truncated = JSON.parse(jsonStr);
 
-  // 1. First trim large text/content bodies in results (e.g. raw HTML or large dumps)
+  // 1. First trim excess logs (logs consume a massive amount of JSON without value)
+  if (truncated.logs && Array.isArray(truncated.logs)) {
+    if (truncated.logs.length > 50) {
+      truncated.logs = truncated.logs.slice(-50);
+    }
+  }
+
+  // Check size after trimming verbose logs
+  if (new Blob([JSON.stringify(truncated)]).size < 920000) {
+    return truncated;
+  }
+
+  // 2. Trim excess AI chat messages
+  if (truncated.messages && Array.isArray(truncated.messages)) {
+    if (truncated.messages.length > 40) {
+      truncated.messages = truncated.messages.slice(-40);
+    }
+  }
+
+  // Check size again
+  if (new Blob([JSON.stringify(truncated)]).size < 920000) {
+    return truncated;
+  }
+
+  // 3. Only if a single page is abnormally huge (e.g. > 300,000 characters = ~300KB),
+  // apply a generous safety cap of 300KB so full documentation and long guides are 100% preserved.
   if (truncated.results && Array.isArray(truncated.results)) {
     truncated.results = truncated.results.map((r: any) => {
       if (typeof r === 'string') return r;
       const copy = { ...r };
-      if (copy && typeof copy.content === 'string' && copy.content.length > 2000) {
-        copy.content = copy.content.substring(0, 2000) + '... (truncated for storage)';
+      const MAX_FIELD_SAFE_CAP = 300000;
+      if (copy && typeof copy.content === 'string' && copy.content.length > MAX_FIELD_SAFE_CAP) {
+        copy.content = copy.content.substring(0, MAX_FIELD_SAFE_CAP);
       }
-      if (copy && typeof copy.text === 'string' && copy.text.length > 2000) {
-        copy.text = copy.text.substring(0, 2000) + '... (truncated for storage)';
+      if (copy && typeof copy.text === 'string' && copy.text.length > MAX_FIELD_SAFE_CAP) {
+        copy.text = copy.text.substring(0, MAX_FIELD_SAFE_CAP);
       }
       return copy;
     });
   }
 
-  // Check size again after trimming huge text
-  let recheckSize = new Blob([JSON.stringify(truncated)]).size;
-  if (recheckSize < 900000) {
-    return truncated;
-  }
-
-  // 2. Trim excess logs
-  if (truncated.logs && Array.isArray(truncated.logs)) {
-    if (truncated.logs.length > 200) {
-      truncated.logs = truncated.logs.slice(-200);
-    }
-  }
-
-  // 3. Trim AI chat messages
-  if (truncated.messages && Array.isArray(truncated.messages)) {
-    if (truncated.messages.length > 100) {
-      truncated.messages = truncated.messages.slice(-100);
-    }
-  }
-
-  // 4. Only if still exceeding 900KB, progressively reduce results up to thousands of clean URLs
+  // 4. If still exceeding 920KB due to hundreds of results, keep the most recent results
   if (truncated.results && Array.isArray(truncated.results)) {
-    while (truncated.results.length > 200 && new Blob([JSON.stringify(truncated)]).size >= 900000) {
-      truncated.results = truncated.results.slice(0, Math.floor(truncated.results.length * 0.8));
+    while (truncated.results.length > 50 && new Blob([JSON.stringify(truncated)]).size >= 920000) {
+      truncated.results = truncated.results.slice(0, Math.floor(truncated.results.length * 0.85));
     }
   }
   
