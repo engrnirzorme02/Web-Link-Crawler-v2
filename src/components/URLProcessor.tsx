@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db, Session } from '../lib/firebase';
 import { doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { Settings2, Play, CheckCircle2, Copy, FileX, Scissors, Filter, Upload, ChevronDown, Download, X, FileText } from 'lucide-react';
+import { Settings2, Play, CheckCircle2, Copy, FileX, Scissors, Filter, Upload, ChevronDown, Download, X, FileText, RotateCcw } from 'lucide-react';
 import { cn, truncateForFirestore, cleanAndSanitizeUrl } from '../lib/utils';
+import { usePersistedConfig } from '../hooks/usePersistedConfig';
 
 interface URLProcessorProps {
   session?: Session | null;
@@ -12,16 +13,27 @@ interface URLProcessorProps {
 
 export default function URLProcessor({ session, userId, onSessionCreated }: URLProcessorProps) {
   const [inputUrls, setInputUrls] = useState('');
-  const [processType, setProcessType] = useState<'remove_duplicates' | 'purify' | 'polish' | 'filter' | 'exclude'>('remove_duplicates');
-  const [polishMatchStr, setPolishMatchStr] = useState('');
-  const [filterMatchStr, setFilterMatchStr] = useState('');
-  const [excludeMatchStr, setExcludeMatchStr] = useState('');
-  const [useRegex, setUseRegex] = useState(false);
+  const [processType, setProcessType, resetProcessType] = usePersistedConfig<'remove_duplicates' | 'purify' | 'polish' | 'filter' | 'exclude'>('url_proc_type', 'remove_duplicates');
+  const [polishMatchStr, setPolishMatchStr, resetPolish] = usePersistedConfig<string>('url_proc_polish', '');
+  const [filterMatchStr, setFilterMatchStr, resetFilter] = usePersistedConfig<string>('url_proc_filter', '');
+  const [excludeMatchStr, setExcludeMatchStr, resetExclude] = usePersistedConfig<string>('url_proc_exclude', '');
+  const [useRegex, setUseRegex, resetRegex] = usePersistedConfig<boolean>('url_proc_regex', false);
   
   const [successList, setSuccessList] = useState<string[]>([]);
   const [unmodifiedList, setUnmodifiedList] = useState<string[]>([]);
   const [copiedSuccess, setCopiedSuccess] = useState(false);
   const [copiedUnmodified, setCopiedUnmodified] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState(false);
+
+  const handleResetDefaults = () => {
+    resetProcessType();
+    resetPolish();
+    resetFilter();
+    resetExclude();
+    resetRegex();
+    setResetFeedback(true);
+    setTimeout(() => setResetFeedback(false), 2000);
+  };
   
   const [visibleSuccessCount, setVisibleSuccessCount] = useState(100);
   const [visibleUnmodifiedCount, setVisibleUnmodifiedCount] = useState(100);
@@ -451,13 +463,25 @@ export default function URLProcessor({ session, userId, onSessionCreated }: URLP
               </div>
             )}
 
-            <button 
-              onClick={handleProcess}
-              className="mt-auto w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2"
-            >
-              <Play className="w-4 h-4" />
-              Process URLs
-            </button>
+            <div className="pt-2 flex flex-col gap-2 mt-auto">
+              <button 
+                onClick={handleProcess}
+                className="w-full min-h-[44px] bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl transition-all shadow-md active:scale-[0.98] flex items-center justify-center gap-2 text-sm"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                Process URLs
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResetDefaults}
+                className="w-full min-h-[44px] py-2.5 px-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 transition-all text-xs font-medium flex items-center justify-center gap-2 active:scale-[0.98]"
+                title="Reset all processor parameters to factory defaults"
+              >
+                <RotateCcw className={cn("w-3.5 h-3.5", resetFeedback && "animate-spin text-emerald-500")} />
+                <span>{resetFeedback ? "Defaults Restored!" : "Reset to Factory Defaults"}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

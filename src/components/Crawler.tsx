@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info, FolderOpen, Shield, Mail, Phone, Share2, Network, CalendarClock, Code2, Sparkles } from 'lucide-react';
+import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info, FolderOpen, Shield, Mail, Phone, Share2, Network, CalendarClock, Code2, Sparkles, RotateCcw, Minus, Plus } from 'lucide-react';
 import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
 import { createEventSourceConnection, fetchWithRetry, logNetworkEvent } from '../lib/api';
 import { Session, db, ParsedPageData } from '../lib/firebase';
@@ -9,6 +9,7 @@ import { CrawlerSessionManagerModal } from './CrawlerSessionManagerModal';
 import { SessionNotesModal } from './SessionNotesModal';
 import { SitemapVisualizer } from './SitemapVisualizer';
 import { ContentEntitiesViewer } from './ContentEntitiesViewer';
+import { usePersistedConfig } from '../hooks/usePersistedConfig';
 
 type CrawlMode = 'single' | 'subdir' | 'domain';
 
@@ -30,28 +31,97 @@ interface CrawlerProps {
   onSessionCreated: (id: string) => void;
 }
 
+const STATIC_MEDIA_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'pdf', 'zip', 'css', 'js', 'mp4', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'avi', 'mov', 'mp3', 'wav', 'tar', 'gz'];
+
 export default function Crawler({ session, userId, allSessions = [], onSelectSession, onSessionCreated }: CrawlerProps) {
   const [url, setUrl] = useState('');
-  const [mode, setMode] = useState<CrawlMode>('domain');
-  const [maxPages, setMaxPages] = useState('50');
-  const [maxDepth, setMaxDepth] = useState('3');
-  const [maxBreadth, setMaxBreadth] = useState('100');
-  const [fileTypes, setFileTypes] = useState('');
-  const [includePatterns, setIncludePatterns] = useState('');
-  const [excludePatterns, setExcludePatterns] = useState('');
-  const [excludeExtensions, setExcludeExtensions] = useState('');
-  const [excludePaths, setExcludePaths] = useState('');
-  const [includeDomains, setIncludeDomains] = useState('');
-  const [excludeDomains, setExcludeDomains] = useState('');
-  const [includePathPattern, setIncludePathPattern] = useState('');
-  const [verboseMode, setVerboseMode] = useState(false);
-  const [keywordFilters, setKeywordFilters] = useState('');
-  const [subdomainOnly, setSubdomainOnly] = useState(true);
-  const [restrictDomain, setRestrictDomain] = useState('');
-  const [crawlDelay, setCrawlDelay] = useState('0');
-  const [extractAll, setExtractAll] = useState(true);
-  const [fuzzPaths, setFuzzPaths] = useState(true);
-  const [customRegex, setCustomRegex] = useState('');
+  
+  // Persisted configurations with usePersistedConfig
+  const [crawlPreset, setCrawlPreset, resetCrawlPreset] = usePersistedConfig<'single' | 'depth' | 'domain'>('crawler_preset', 'domain');
+  const [mode, setMode, resetMode] = usePersistedConfig<CrawlMode>('crawler_mode', 'domain');
+  const [maxPages, setMaxPages, resetMaxPages] = usePersistedConfig<string>('crawler_maxPages', '50');
+  const [maxDepth, setMaxDepth, resetMaxDepth] = usePersistedConfig<string>('crawler_maxDepth', '2');
+  const [maxBreadth, setMaxBreadth, resetMaxBreadth] = usePersistedConfig<string>('crawler_maxBreadth', '100');
+  const [skipStaticAssets, setSkipStaticAssets, resetSkipStaticAssets] = usePersistedConfig<boolean>('crawler_skipStaticAssets', true);
+  const [fileTypes, setFileTypes, resetFileTypes] = usePersistedConfig<string>('crawler_fileTypes', '');
+  const [includePatterns, setIncludePatterns, resetIncludePatterns] = usePersistedConfig<string>('crawler_includePatterns', '');
+  const [excludePatterns, setExcludePatterns, resetExcludePatterns] = usePersistedConfig<string>('crawler_excludePatterns', '');
+  const [excludeExtensions, setExcludeExtensions, resetExcludeExtensions] = usePersistedConfig<string>('crawler_excludeExtensions', '');
+  const [excludePaths, setExcludePaths, resetExcludePaths] = usePersistedConfig<string>('crawler_excludePaths', '');
+  const [includeDomains, setIncludeDomains, resetIncludeDomains] = usePersistedConfig<string>('crawler_includeDomains', '');
+  const [excludeDomains, setExcludeDomains, resetExcludeDomains] = usePersistedConfig<string>('crawler_excludeDomains', '');
+  const [includePathPattern, setIncludePathPattern, resetIncludePathPattern] = usePersistedConfig<string>('crawler_includePathPattern', '');
+  const [verboseMode, setVerboseMode, resetVerboseMode] = usePersistedConfig<boolean>('crawler_verboseMode', false);
+  const [keywordFilters, setKeywordFilters, resetKeywordFilters] = usePersistedConfig<string>('crawler_keywordFilters', '');
+  const [subdomainOnly, setSubdomainOnly, resetSubdomainOnly] = usePersistedConfig<boolean>('crawler_subdomainOnly', true);
+  const [restrictDomain, setRestrictDomain, resetRestrictDomain] = usePersistedConfig<string>('crawler_restrictDomain', '');
+  const [crawlDelay, setCrawlDelay, resetCrawlDelay] = usePersistedConfig<string>('crawler_crawlDelay', '0');
+  const [extractAll, setExtractAll, resetExtractAll] = usePersistedConfig<boolean>('crawler_extractAll', true);
+  const [fuzzPaths, setFuzzPaths, resetFuzzPaths] = usePersistedConfig<boolean>('crawler_fuzzPaths', true);
+  const [customRegex, setCustomRegex, resetCustomRegex] = usePersistedConfig<string>('crawler_customRegex', '');
+  
+  const [resetFeedback, setResetFeedback] = useState(false);
+  const [copiedCleanUrls, setCopiedCleanUrls] = useState(false);
+
+  const handleResetToFactoryDefaults = () => {
+    resetCrawlPreset();
+    resetMode();
+    resetMaxPages();
+    resetMaxDepth();
+    resetMaxBreadth();
+    resetSkipStaticAssets();
+    resetFileTypes();
+    resetIncludePatterns();
+    resetExcludePatterns();
+    resetExcludeExtensions();
+    resetExcludePaths();
+    resetIncludeDomains();
+    resetExcludeDomains();
+    resetIncludePathPattern();
+    resetVerboseMode();
+    resetKeywordFilters();
+    resetSubdomainOnly();
+    resetRestrictDomain();
+    resetCrawlDelay();
+    resetExtractAll();
+    resetFuzzPaths();
+    resetCustomRegex();
+    setResetFeedback(true);
+    setTimeout(() => setResetFeedback(false), 2000);
+  };
+
+  const handleSelectPreset = (preset: 'single' | 'depth' | 'domain') => {
+    setCrawlPreset(preset);
+    if (preset === 'single') {
+      setMode('single');
+      setMaxDepth('0');
+    } else if (preset === 'depth') {
+      setMode('subdir');
+      const d = parseInt(maxDepth, 10);
+      if (isNaN(d) || d < 1 || d > 5) {
+        setMaxDepth('2');
+      }
+    } else if (preset === 'domain') {
+      setMode('domain');
+      setMaxDepth('5');
+      setSubdomainOnly(true);
+    }
+  };
+
+  const handleStepDepth = (delta: number) => {
+    const current = parseInt(maxDepth, 10) || 2;
+    const next = Math.max(1, Math.min(5, current + delta));
+    setMaxDepth(next.toString());
+  };
+
+  const handleCopyCleanUrls = () => {
+    if (results.length === 0) return;
+    const cleanList = Array.from(new Set(results.map(r => cleanAndSanitizeUrl(r.url)).filter(Boolean)));
+    navigator.clipboard.writeText(cleanList.join('\n'));
+    setCopiedCleanUrls(true);
+    setTimeout(() => setCopiedCleanUrls(false), 2200);
+  };
+
   const [pageDataMap, setPageDataMap] = useState<Map<string, ParsedPageData>>(new Map());
   const [resultsViewTab, setResultsViewTab] = useState<'urls' | 'sitemap' | 'entities' | 'graph'>('urls');
   
@@ -472,9 +542,26 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
         // Skip invalid formats silently instead of failing the whole batch
       }
     }
+
+    // Static Assets & Media filter before dispatching network requests
+    const STATIC_ASSET_EXT_REGEX = /\.(jpe?g|png|gif|svg|webp|pdf|zip|css|js|mp4)(\?.*)?$/i;
+    if (skipStaticAssets) {
+      const originalCount = validUrls.length;
+      validUrls = validUrls.filter(u => {
+        try {
+          const pathname = new URL(u).pathname;
+          return !STATIC_ASSET_EXT_REGEX.test(pathname);
+        } catch {
+          return true;
+        }
+      });
+      if (validUrls.length < originalCount) {
+        addLog(`[Skip Static Assets] Filtered out ${originalCount - validUrls.length} media/asset seed URL(s) before network request.`);
+      }
+    }
     
     if (validUrls.length === 0) {
-      setError('Could not find any valid URLs. Please check your input.');
+      setError('Could not find any valid HTML page URLs. (Static assets were skipped by filter).');
       return;
     }
     
@@ -654,6 +741,13 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
       addLog(`[${i+1}/${validUrls.length}] Starting crawl for: ${targetUrl}`);
       setStatusMessage(`[${i+1}/${validUrls.length}] Crawling: ${extractSafeHostname(targetUrl)}...`);
 
+      let effectiveExcludeExtensions = currentExcludeExtensions.trim();
+      if (skipStaticAssets) {
+        const staticExts = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'pdf', 'zip', 'css', 'js', 'mp4'];
+        const userExts = effectiveExcludeExtensions ? effectiveExcludeExtensions.split(',').map(s => s.trim().replace(/^\./, '')) : [];
+        effectiveExcludeExtensions = Array.from(new Set([...userExts, ...staticExts])).filter(Boolean).join(',');
+      }
+
       const query = new URLSearchParams({
         url: targetUrl,
         mode: currentMode,
@@ -667,7 +761,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
         fileTypes: currentFileTypes.trim(),
         includePatterns: currentIncludePatterns.trim(),
         excludePatterns: currentExcludePatterns.trim(),
-        excludeExtensions: currentExcludeExtensions.trim(),
+        excludeExtensions: effectiveExcludeExtensions,
         excludePaths: currentExcludePaths.trim(),
         includeDomains: currentIncludeDomains.trim(),
         excludeDomains: currentExcludeDomains.trim(),
@@ -737,6 +831,12 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
             } else if (data.type === 'link') {
               const cleanedUrl = cleanAndSanitizeUrl(data.url);
               if (!cleanedUrl) return;
+              if (skipStaticAssets) {
+                try {
+                  const pathname = new URL(cleanedUrl).pathname;
+                  if (STATIC_ASSET_EXT_REGEX.test(pathname)) return;
+                } catch {}
+              }
               setResults(prev => {
                 if (prev.some(r => r.url === cleanedUrl)) return prev;
                 return [{ url: cleanedUrl, source: data.source }, ...prev];
@@ -1035,47 +1135,123 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
               <p className="text-[10px] text-zinc-400 mt-1">Enter multiple URLs (one per line) for bulk processing.</p>
             </div>
 
-            {/* Mode Selection */}
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">Crawl Boundary</label>
-              <div className="grid grid-cols-3 gap-2">
+            {/* Mobile 3-Mode Segmented Pill Selector */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                  Crawl Scope
+                </label>
+                <span className="text-[11px] text-zinc-400 font-medium">
+                  {crawlPreset === 'single' ? 'Direct page links (depth 0)' : crawlPreset === 'depth' ? `Depth limited (${maxDepth} level${Number(maxDepth) > 1 ? 's' : ''})` : 'Full domain boundary'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 p-1 bg-zinc-100 dark:bg-zinc-900 rounded-2xl border border-zinc-200/80 dark:border-zinc-800 gap-1">
                 <button
                   type="button"
-                  onClick={() => setMode('single')}
+                  onClick={() => handleSelectPreset('single')}
                   disabled={isCrawling}
                   className={cn(
-                    "flex flex-col items-center justify-center p-3 rounded-xl text-xs font-medium transition-all border",
-                    mode === 'single' ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400" : "bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                    "min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+                    crawlPreset === 'single'
+                      ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-sm border border-zinc-200/60 dark:border-zinc-700/60"
+                      : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                   )}
                 >
-                  <FileText className="w-5 h-5 mb-1.5" />
-                  Single Page
+                  <FileText className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Single Page</span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setMode('subdir')}
+                  onClick={() => handleSelectPreset('depth')}
                   disabled={isCrawling}
                   className={cn(
-                    "flex flex-col items-center justify-center p-3 rounded-xl text-xs font-medium transition-all border",
-                    mode === 'subdir' ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400" : "bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                    "min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+                    crawlPreset === 'depth'
+                      ? "bg-white dark:bg-zinc-800 text-purple-600 dark:text-purple-400 shadow-sm border border-zinc-200/60 dark:border-zinc-700/60"
+                      : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                   )}
                 >
-                  <LinkIcon className="w-5 h-5 mb-1.5" />
-                  Directory
+                  <Layers className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Depth Limited</span>
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setMode('domain')}
+                  onClick={() => handleSelectPreset('domain')}
                   disabled={isCrawling}
                   className={cn(
-                    "flex flex-col items-center justify-center p-3 rounded-xl text-xs font-medium transition-all border",
-                    mode === 'domain' ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400" : "bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                    "min-h-[44px] flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+                    crawlPreset === 'domain'
+                      ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-sm border border-zinc-200/60 dark:border-zinc-700/60"
+                      : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
                   )}
                 >
-                  <Globe className="w-5 h-5 mb-1.5" />
-                  Domain
+                  <Globe className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Entire Domain</span>
                 </button>
               </div>
+
+              {/* Depth Stepper for Depth Limited mode */}
+              {crawlPreset === 'depth' && (
+                <div className="p-3 bg-purple-50/70 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-900/40 rounded-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div>
+                    <span className="text-xs font-semibold text-purple-950 dark:text-purple-200 block">
+                      Crawl Depth Limit
+                    </span>
+                    <span className="text-[11px] text-purple-700/80 dark:text-purple-400/80">
+                      Follow links up to {maxDepth} level{Number(maxDepth) > 1 ? 's' : ''} deep
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 bg-white dark:bg-zinc-900 p-1 rounded-xl border border-purple-200 dark:border-purple-800/80 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => handleStepDepth(-1)}
+                      disabled={isCrawling || Number(maxDepth) <= 1}
+                      className="w-10 h-10 min-h-[40px] rounded-lg bg-zinc-100 hover:bg-purple-100 dark:bg-zinc-800 dark:hover:bg-purple-900/40 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 flex items-center justify-center transition-colors active:scale-95"
+                      title="Decrease Depth"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="w-8 text-center font-bold text-sm text-purple-700 dark:text-purple-300 font-mono">
+                      {maxDepth}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleStepDepth(1)}
+                      disabled={isCrawling || Number(maxDepth) >= 5}
+                      className="w-10 h-10 min-h-[40px] rounded-lg bg-zinc-100 hover:bg-purple-100 dark:bg-zinc-800 dark:hover:bg-purple-900/40 text-zinc-700 dark:text-zinc-300 disabled:opacity-40 flex items-center justify-center transition-colors active:scale-95"
+                      title="Increase Depth"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Toggle: Skip Static Assets & Media */}
+              <label className="min-h-[44px] flex items-center justify-between p-3 rounded-2xl border border-zinc-200/90 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/40 hover:bg-zinc-100/60 dark:hover:bg-zinc-900/80 transition-colors cursor-pointer group">
+                <div className="pr-3">
+                  <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 block">
+                    Skip Static Assets & Media
+                  </span>
+                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    Purges .jpg, .png, .gif, .svg, .webp, .pdf, .zip, .css, .js, .mp4 before proxy
+                  </span>
+                </div>
+                <div className="relative flex items-center shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={skipStaticAssets}
+                    onChange={(e) => setSkipStaticAssets(e.target.checked)}
+                    disabled={isCrawling}
+                    className="peer sr-only"
+                  />
+                  <div className="w-11 h-6 bg-zinc-300 peer-focus:outline-none rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600 disabled:opacity-50"></div>
+                </div>
+              </label>
             </div>
 
             {/* Advanced Settings Accordion */}
@@ -1344,6 +1520,17 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
               )}
             </div>
 
+            {/* Tactile Reset to Factory Defaults Action */}
+            <button
+              type="button"
+              onClick={handleResetToFactoryDefaults}
+              className="w-full min-h-[44px] py-2.5 px-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50/60 dark:bg-zinc-900/40 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 transition-all text-xs font-medium flex items-center justify-center gap-2 active:scale-[0.98]"
+              title="Reset all crawler parameters to pristine initial defaults"
+            >
+              <RotateCcw className={cn("w-3.5 h-3.5", resetFeedback && "animate-spin text-emerald-500")} />
+              <span>{resetFeedback ? "Defaults Restored!" : "Reset to Factory Defaults"}</span>
+            </button>
+
             {error && (
               <div className="flex items-center gap-2 text-red-600 bg-red-50 dark:bg-red-900/20 px-4 py-3 rounded-xl border border-red-200 dark:border-red-800/30 text-sm">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -1355,35 +1542,37 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
           {/* Fixed Bottom Action Button */}
           <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-[0_-4px_15px_rgba(0,0,0,0.03)] dark:shadow-none z-10 shrink-0">
             {!isCrawling ? (
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2.5">
                 <button 
                   onClick={(e) => {
                     e.preventDefault();
-                    handleStart({
-                      mode: 'domain',
-                      maxPages: '1000',
-                      maxDepth: '10',
-                      extractAll: true,
-                      fuzzPaths: true,
-                      subdomainOnly: false,
-                      fileTypes: ''
-                    });
+                    handleStart();
                   }}
-                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-lg hover:shadow-purple-600/25 active:scale-[0.98]"
+                  className="w-full min-h-[48px] flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3.5 rounded-2xl transition-all shadow-lg hover:shadow-blue-600/25 active:scale-[0.98] text-sm"
                 >
-                  <Zap className="w-5 h-5 fill-current" />
-                  All-in-One Deep Extract
+                  <Play className="w-5 h-5 fill-current" />
+                  <span>Start Crawl</span>
                 </button>
-                <div className="flex gap-3">
+
+                <div className="flex gap-2">
                   <button 
                     onClick={(e) => {
                       e.preventDefault();
-                      handleStart();
+                      handleStart({
+                        mode: 'domain',
+                        maxPages: '1000',
+                        maxDepth: '10',
+                        extractAll: true,
+                        fuzzPaths: true,
+                        subdomainOnly: false,
+                        fileTypes: ''
+                      });
                     }}
-                    className="flex-1 flex items-center justify-center gap-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-medium py-3 rounded-xl transition-all active:scale-[0.98]"
+                    className="flex-1 min-h-[44px] flex items-center justify-center gap-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium py-2.5 rounded-xl transition-all text-xs active:scale-[0.98]"
+                    title="Deep recursive multi-page extraction"
                   >
-                    <Play className="w-5 h-5 fill-current opacity-70" />
-                    Start Crawl
+                    <Zap className="w-4 h-4 text-purple-500 fill-current" />
+                    <span>Deep Extract</span>
                   </button>
                   {results.length > 0 && (
                     <button 
@@ -1895,37 +2084,34 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
                 )}
               </div>
 
-              {/* Floating Action Button for Copy & Download */}
+              {/* Sticky Mobile Bottom Action Bar over Crawl Results */}
               {results.length > 0 && (
-                <div className="absolute bottom-4 right-4 md:bottom-6 md:right-6 z-10 flex flex-col gap-2">
+                <div className="sticky bottom-0 left-0 right-0 p-3 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border-t border-zinc-200/90 dark:border-zinc-800 z-20 flex items-center gap-2 pb-safe shadow-[0_-4px_16px_rgba(0,0,0,0.06)]">
                   <button
-                    onClick={removeDuplicates}
-                    className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-5 py-3 rounded-full shadow-xl hover:scale-105 active:scale-95 transition-all font-medium"
+                    onClick={handleCopyCleanUrls}
+                    className="flex-1 min-h-[48px] bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md active:scale-[0.98] transition-all flex items-center justify-center gap-2 text-xs sm:text-sm"
+                    title="1-Tap Copy all clean deduplicated URLs to Android clipboard"
                   >
-                    <Layers className="w-5 h-5" />
-                    Remove Duplicates
+                    {copiedCleanUrls ? <CheckCircle2 className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedCleanUrls ? `Copied ${results.length} URLs!` : `Copy Clean URLs (${results.length})`}</span>
                   </button>
+
                   <button
                     onClick={downloadCleanTxt}
-                    className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-full shadow-xl hover:scale-105 active:scale-95 transition-all font-medium"
-                    title="Download pure clean URLs (.txt) - no brackets, no markdown"
+                    className="min-h-[48px] px-3.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold rounded-xl border border-emerald-200 dark:border-emerald-800/60 text-xs flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all shrink-0"
+                    title="Download pure clean URLs (.txt)"
                   >
-                    <Download className="w-5 h-5" />
-                    Download .txt (Clean)
+                    <Download className="w-4 h-4" />
+                    <span>.TXT</span>
                   </button>
+
                   <button
-                    onClick={downloadMD}
-                    className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-full shadow-xl hover:scale-105 active:scale-95 transition-all font-medium"
+                    onClick={removeDuplicates}
+                    className="min-h-[48px] px-3 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-medium rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs flex items-center justify-center gap-1.5 active:scale-[0.98] transition-all shrink-0"
+                    title="Deduplicate URLs"
                   >
-                    <Download className="w-5 h-5" />
-                    Download .md
-                  </button>
-                  <button
-                    onClick={copyAll}
-                    className="flex items-center justify-center gap-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 px-5 py-3 rounded-full shadow-xl hover:scale-105 active:scale-95 transition-all font-medium"
-                  >
-                    {copiedCategory === 'all' ? <CheckCircle2 className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                    {copiedCategory === 'all' ? 'Copied!' : 'Copy All'}
+                    <Layers className="w-4 h-4 text-purple-500" />
+                    <span className="hidden sm:inline">Dedup</span>
                   </button>
                 </div>
               )}
@@ -1992,25 +2178,25 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
         </div>
       </div>
       
-      {/* Mobile Bottom Navigation */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 flex border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 z-50 shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
+      {/* Mobile Bottom Navigation with Android Gesture Inset Safety */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 flex border-t border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-md z-50 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] pb-safe">
         <button 
           onClick={() => setMobileTab('config')}
-          className={cn("flex-1 py-3 flex flex-col items-center justify-center gap-1 transition-colors", mobileTab === 'config' ? "text-blue-600" : "text-zinc-500 dark:text-zinc-400")}
+          className={cn("flex-1 min-h-[48px] py-2 flex flex-col items-center justify-center gap-0.5 transition-colors", mobileTab === 'config' ? "text-blue-600 dark:text-blue-400" : "text-zinc-500 dark:text-zinc-400")}
         >
           <Settings className="w-5 h-5" />
           <span className="text-[10px] font-semibold uppercase tracking-wider">Config</span>
         </button>
         <button 
           onClick={() => setSessionManagerOpen(true)}
-          className="flex-1 py-3 flex flex-col items-center justify-center gap-1 transition-colors text-zinc-500 dark:text-zinc-400 hover:text-blue-600"
+          className="flex-1 min-h-[48px] py-2 flex flex-col items-center justify-center gap-0.5 transition-colors text-zinc-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400"
         >
           <FolderOpen className="w-5 h-5" />
           <span className="text-[10px] font-semibold uppercase tracking-wider">Sessions</span>
         </button>
         <button 
           onClick={() => setMobileTab('results')}
-          className={cn("flex-1 py-3 flex flex-col items-center justify-center gap-1 transition-colors", mobileTab === 'results' ? "text-blue-600" : "text-zinc-500 dark:text-zinc-400")}
+          className={cn("flex-1 min-h-[48px] py-2 flex flex-col items-center justify-center gap-0.5 transition-colors", mobileTab === 'results' ? "text-blue-600 dark:text-blue-400" : "text-zinc-500 dark:text-zinc-400")}
         >
           <FileText className="w-5 h-5" />
           <span className="text-[10px] font-semibold uppercase tracking-wider">Results</span>

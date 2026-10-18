@@ -1,45 +1,78 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, AlertTriangle, Cpu, BarChart2, Calendar, X } from 'lucide-react';
+import { Activity, AlertTriangle, Cpu, CheckCircle2, RefreshCw, X, Database, Key, ShieldCheck, Flame } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
-const dailyData = [
-  { day: 'Mon', requests: 120 },
-  { day: 'Tue', requests: 300 },
-  { day: 'Wed', requests: 150 },
-  { day: 'Thu', requests: 400 },
-  { day: 'Fri', requests: 250 },
-  { day: 'Sat', requests: 80 },
-  { day: 'Sun', requests: 50 },
-];
+interface KeyStatus {
+  name: string;
+  status: string;
+  failCount: number;
+  totalCalls: number;
+  successCalls: number;
+  lastUsedAt: string;
+  cooldownRemainingSeconds: number;
+  lastError: string | null;
+}
 
-const monthlyData = [
-  { month: 'Jan', requests: 1200 },
-  { month: 'Feb', requests: 2100 },
-  { month: 'Mar', requests: 800 },
-  { month: 'Apr', requests: 1500 },
-  { month: 'May', requests: 3000 },
-  { month: 'Jun', requests: 2500 },
-];
+interface SystemStatus {
+  status: string;
+  timestamp: string;
+  firebase: {
+    connected: boolean;
+    status: string;
+    projectId?: string;
+    firestoreDatabaseId?: string;
+    authDomain?: string;
+  };
+  gemini: {
+    connected: boolean;
+    totalKeysConfigured: number;
+    activeHealthyKeysCount: number;
+    keys: KeyStatus[];
+    primaryModel: string;
+    supportedModels: string[];
+    rotationMode: string;
+    autoFallback: boolean;
+  };
+}
 
 export function ApiUsageMonitor() {
-  const [tokenUsage, setTokenUsage] = useState(0);
-  const [model, setModel] = useState('Passive Mode (Offline)');
+  const [model, setModel] = useState('gemini-3.5-flash');
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'daily' | 'monthly'>('daily');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [statusData, setStatusData] = useState<SystemStatus | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const fetchStatus = async () => {
+    setIsRefreshing(true);
+    try {
+      const res = await fetch('/api/system-status');
+      if (res.ok) {
+        const data = await res.json();
+        setStatusData(data);
+        if (data.gemini?.primaryModel) {
+          setModel(data.gemini.primaryModel);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch system status:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 30000); // 30s auto check
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const handleUsageUpdate = (e: any) => {
-      if (e.detail?.tokens) {
-        setTokenUsage(0); // Kept at zero in Passive Mode
-      }
       if (e.detail?.model) {
         setModel(e.detail.model);
       }
     };
     window.addEventListener('api-usage', handleUsageUpdate);
-
     return () => {
       window.removeEventListener('api-usage', handleUsageUpdate);
     };
@@ -57,159 +90,180 @@ export function ApiUsageMonitor() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isOpen]);
 
-  const limit = 32000;
-  const usagePercentage = Math.min(100, Math.round((tokenUsage / limit) * 100));
-  const isWarning = usagePercentage > 75;
-  const isDanger = usagePercentage > 95;
+  const isGeminiConnected = statusData?.gemini?.connected ?? true;
+  const isFirebaseConnected = statusData?.firebase?.connected ?? true;
+  const activeKeysCount = statusData?.gemini?.activeHealthyKeysCount ?? 2;
 
   return (
     <div className="relative" ref={dropdownRef}>
       <button 
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          setIsOpen(!isOpen);
+          if (!isOpen) fetchStatus();
+        }}
         className={cn(
-          "flex items-center gap-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-full px-3 py-1.5 shadow-sm ml-4 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50",
+          "flex items-center gap-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-full px-3 py-1.5 shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50",
           isOpen && "ring-2 ring-blue-500/50"
         )}
+        title="Firebase ও Gemini API Key Rotation স্ট্যাটাস দেখতে ক্লিক করুন"
       >
-        <div className="flex items-center gap-1.5 border-r border-zinc-200 dark:border-zinc-800 pr-3">
-          <Cpu className="w-4 h-4 text-purple-600" />
-          <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400 max-w-[120px] truncate">
-            {model.replace('-preview', '')}
+        <div className="flex items-center gap-1.5 border-r border-zinc-200 dark:border-zinc-800 pr-2.5">
+          <Cpu className="w-3.5 h-3.5 text-purple-600" />
+          <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 max-w-[130px] truncate font-medium">
+            {model.split(' ')[0]}
           </span>
         </div>
         
-        <div className="flex items-center gap-2">
-          <Activity className={cn("w-4 h-4", isDanger ? "text-red-500 animate-pulse" : isWarning ? "text-amber-500" : "text-emerald-500")} />
-          <div className="w-20 md:w-24 h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-            <div 
-              className={cn(
-                "h-full rounded-full transition-all duration-500",
-                isDanger ? "bg-red-500" : isWarning ? "bg-amber-500" : "bg-emerald-500"
-              )}
-              style={{ width: `${usagePercentage}%` }}
-            />
-          </div>
-          <span className={cn(
-            "text-[10px] font-bold w-7",
-            isDanger ? "text-red-600 dark:text-red-400" : isWarning ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
-          )}>
-            {usagePercentage}%
+        <div className="flex items-center gap-1.5">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+            {activeKeysCount} Keys Active
           </span>
         </div>
       </button>
 
-      {isWarning && !isOpen && (
-        <div className="absolute top-full mt-2 right-0 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-in fade-in slide-in-from-top-2 z-50 whitespace-nowrap">
-          <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>Approaching API limits. Auto-switching model if needed.</span>
-        </div>
-      )}
-
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-80 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xl z-50 animate-in fade-in slide-in-from-top-2 overflow-hidden">
-          <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+        <div className="absolute top-full right-0 mt-2 w-88 sm:w-96 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 overflow-hidden">
+          {/* Header */}
+          <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/70 dark:bg-zinc-800/40">
             <div>
-              <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-emerald-500" />
-                API Status: Passive Safe Mode
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                Firebase & API Connection Monitor
               </h3>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Automated Cloud Requests Canceled (0 Active Outbound Calls)</p>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                রিয়েল-টাইম কানেকশন ও অটো-ফলব্যাক স্থিতি
+              </p>
             </div>
-            <button onClick={() => setIsOpen(false)} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={fetchStatus} 
+                disabled={isRefreshing}
+                className="p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors"
+                title="রিফ্রেশ করুন"
+              >
+                <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+              </button>
+              <button 
+                onClick={() => setIsOpen(false)} 
+                className="p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
           
-          <div className="p-4">
-            <div className="flex items-center gap-2 mb-4 bg-zinc-100 dark:bg-zinc-800 p-1 rounded-lg">
-              <button 
-                onClick={() => setActiveTab('daily')}
-                className={cn(
-                  "flex-1 text-xs font-medium py-1.5 rounded-md transition-colors",
-                  activeTab === 'daily' ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
-                )}
-              >
-                Daily
-              </button>
-              <button 
-                onClick={() => setActiveTab('monthly')}
-                className={cn(
-                  "flex-1 text-xs font-medium py-1.5 rounded-md transition-colors",
-                  activeTab === 'monthly' ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
-                )}
-              >
-                Monthly
-              </button>
+          <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
+            {/* 1. Firebase Connection Box */}
+            <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500">
+                    <Flame className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 block">Firebase Firestore & Auth</span>
+                    <span className="text-[10px] text-zinc-500 dark:text-zinc-400">Database Connection</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  Connected
+                </div>
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-zinc-200/60 dark:border-zinc-700/60 text-[11px] text-zinc-600 dark:text-zinc-400 space-y-1">
+                <div className="flex justify-between items-center">
+                  <span>Firestore DB ID:</span>
+                  <span className="font-mono text-[10px] font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[190px]" title="ai-studio-weblinkcrawlerv2-b7d7b3c7-e6c6-456d-8aff-b255ec8af9be">
+                    {statusData?.firebase?.firestoreDatabaseId || 'ai-studio-weblinkcrawlerv2-b7d7b3c7-e6c6...'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span>Cloud Project:</span>
+                  <span className="font-mono text-[10px] font-semibold text-zinc-800 dark:text-zinc-200">
+                    {statusData?.firebase?.projectId || 'gen-lang-client-0186182351'}
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div className="h-48 w-full mt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                {activeTab === 'daily' ? (
-                  <LineChart data={dailyData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" className="dark:stroke-zinc-800" />
-                    <XAxis 
-                      dataKey="day" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fill: '#71717a' }} 
-                      dy={10}
-                    />
-                    <YAxis 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fill: '#71717a' }} 
-                    />
-                    <Tooltip 
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
-                      itemStyle={{ color: '#8b5cf6', fontWeight: 500 }}
-                      formatter={(value: number) => [`${value} reqs`, 'Usage']}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="requests" 
-                      stroke="#8b5cf6" 
-                      strokeWidth={2} 
-                      dot={{ r: 4, fill: '#8b5cf6', strokeWidth: 0 }} 
-                      activeDot={{ r: 6, strokeWidth: 0 }}
-                    />
-                  </LineChart>
-                ) : (
-                  <BarChart data={monthlyData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" className="dark:stroke-zinc-800" />
-                    <XAxis 
-                      dataKey="month" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fill: '#71717a' }} 
-                      dy={10}
-                    />
-                    <YAxis 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{ fontSize: 10, fill: '#71717a' }} 
-                    />
-                    <Tooltip 
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontSize: '12px' }}
-                      itemStyle={{ color: '#0ea5e9', fontWeight: 500 }}
-                      cursor={{ fill: 'rgba(113, 113, 122, 0.1)' }}
-                      formatter={(value: number) => [`${value} reqs`, 'Usage']}
-                    />
-                    <Bar 
-                      dataKey="requests" 
-                      fill="#0ea5e9" 
-                      radius={[4, 4, 0, 0]} 
-                      maxBarSize={30}
-                    />
-                  </BarChart>
-                )}
-              </ResponsiveContainer>
+            {/* 2. Gemini Multi-Key Rotation Pool */}
+            <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-600">
+                    <Key className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 block">Gemini API Multi-Key Pool</span>
+                    <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                      Random & Round-Robin + Auto Fallback
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 dark:bg-purple-950/60 dark:text-purple-400 border border-purple-200 dark:border-purple-800">
+                  Active
+                </div>
+              </div>
+
+              {/* Key Items List */}
+              <div className="mt-2.5 space-y-2">
+                {statusData?.gemini?.keys?.map((k, idx) => {
+                  const isHealthy = k.status === 'active';
+                  const isRateLimited = k.status.includes('rate_limited');
+                  const isInvalid = k.status === 'invalid';
+
+                  return (
+                    <div key={k.name} className="p-2 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-[11px]">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-bold text-zinc-800 dark:text-zinc-200 truncate max-w-[180px]">
+                          {k.name}
+                        </span>
+                        {isHealthy ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            Healthy / Ready
+                          </span>
+                        ) : isRateLimited ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded">
+                            <AlertTriangle className="w-2.5 h-2.5" />
+                            Quota Limit ({k.cooldownRemainingSeconds}s)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded">
+                            Invalid / Auto-Bypassed
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
+                        <span>সফল কল: {k.successCalls} | মোট: {k.totalCalls}</span>
+                        {k.lastUsedAt !== 'Never' && (
+                          <span>ব্যবহৃত: {new Date(k.lastUsedAt).toLocaleTimeString()}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Auto Fallback Rule description */}
+              <div className="mt-3 p-2 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 text-[11px] text-blue-800 dark:text-blue-300 leading-relaxed">
+                <span className="font-bold">⚡ অটো-ফলব্যাক কন্ডিশন সক্রিয়:</span>
+                <p className="mt-0.5 text-[10px] text-blue-700 dark:text-blue-300">
+                  প্রতিটি রিকোয়েস্টে সুস্থ কীগুলোর মধ্যে র‍্যান্ডম বা এক এক করে কানেক্ট করা হয়। কোনো কীতে রেট লিমিট (429/Quota) দেখা দিলে তাৎক্ষণিক কুলডাউন সেট করে পরের অ্যাক্টিভ কীতে অটোমেটিক ফলব্যাক ঘটে।
+                </p>
+              </div>
             </div>
-            
-            <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-between items-center text-xs text-zinc-500 dark:text-zinc-400">
-              <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> Current billing cycle</span>
-              <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                {activeTab === 'daily' ? '1,300 total' : '11,100 total'}
-              </span>
+
+            {/* 3. Active AI Models */}
+            <div className="flex items-center justify-between text-[11px] text-zinc-500 px-1">
+              <span>Primary Engine:</span>
+              <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">gemini-3.5-flash (Backup: flash-lite)</span>
             </div>
           </div>
         </div>

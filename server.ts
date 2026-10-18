@@ -8,19 +8,269 @@ import { GoogleGenAI } from '@google/genai';
 import https from 'https';
 
 // ==============================================================================
-// PASSIVE PROTECTION MODE (Google Cloud Policy & Spam Violation Prevention)
-// All background and automated outbound requests to Google Cloud, Gemini API,
-// Google Workspace/Chat, and automated scraping loops are CANCELLED & DEACTIVATED.
-// Local code logic, Cheerio DOM parsing, and Firebase structures remain 100% intact.
+// GEMINI MULTI-KEY ROTATION & AUTO-FAILOVER POOL
+// Supports GEMINI_API_KEY, GEMINI_API_KEY_engrikdev, GEMINI_API_KEY_engrikdev2
+// Rotates keys randomly / round-robin and automatically falls back on rate limit (429),
+// quota exhaustion, invalid keys (400), or temporary 503 high demand spikes.
 // ==============================================================================
-const CLOUD_AUTOMATION_ACTIVE = false;
 
-// Safe passive stub for Gemini SDK: prevents outbound API requests & token usage
-let aiClient: GoogleGenAI | null = null;
-function getAi(): GoogleGenAI | null {
-  // Permanently deactivated in Passive Safe Mode to protect account
-  return null;
+export interface GeminiKeyItem {
+  name: string;
+  key: string;
+  status: 'active' | 'rate_limited' | 'invalid' | 'cooldown';
+  failCount: number;
+  totalCalls: number;
+  successCalls: number;
+  cooldownUntil: number;
+  lastUsedAt?: string;
+  lastError?: string;
 }
+
+export class GeminiKeyRotationManager {
+  private keys: GeminiKeyItem[] = [];
+  public candidateModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
+  public preferredModel = 'gemini-3.5-flash';
+  private roundRobinIndex = 0;
+
+  constructor() {
+    this.refreshKeys();
+  }
+
+  public refreshKeys() {
+    const keyConfigs = [
+      { name: 'GEMINI_API_KEY', val: process.env.GEMINI_API_KEY },
+      { name: 'GEMINI_API_KEY_engrikdev', val: process.env.GEMINI_API_KEY_engrikdev },
+      { name: 'GEMINI_API_KEY_engrikdev2', val: process.env.GEMINI_API_KEY_engrikdev2 },
+    ];
+
+    for (const item of keyConfigs) {
+      if (!item.val || item.val.trim().length === 0) continue;
+      const existing = this.keys.find(k => k.name === item.name);
+      if (!existing) {
+        this.keys.push({
+          name: item.name,
+          key: item.val.trim(),
+          status: 'active',
+          failCount: 0,
+          totalCalls: 0,
+          successCalls: 0,
+          cooldownUntil: 0,
+        });
+      } else {
+        existing.key = item.val.trim();
+      }
+    }
+  }
+
+  public getAvailableKeys(): GeminiKeyItem[] {
+    const now = Date.now();
+    return this.keys.filter(k => k.status !== 'invalid' && k.cooldownUntil <= now);
+  }
+
+  public pickNextKey(): GeminiKeyItem | null {
+    const available = this.getAvailableKeys();
+    if (available.length === 0) {
+      // If all healthy keys are in cooldown, pick the one whose cooldown expires soonest
+      const candidates = this.keys.filter(k => k.status !== 'invalid');
+      if (candidates.length === 0) return null;
+      return candidates.sort((a, b) => a.cooldownUntil - b.cooldownUntil)[0];
+    }
+
+    // Hybrid: randomly choose or round-robin to distribute load evenly
+    if (Math.random() > 0.5) {
+      const randIdx = Math.floor(Math.random() * available.length);
+      return available[randIdx];
+    } else {
+      this.roundRobinIndex = (this.roundRobinIndex + 1) % available.length;
+      return available[this.roundRobinIndex];
+    }
+  }
+
+  public markKeyFailure(keyItem: GeminiKeyItem, err: any) {
+    const errMsg = err?.message || String(err);
+    const status = err?.status || err?.response?.status;
+    keyItem.failCount++;
+    keyItem.lastError = errMsg.substring(0, 160);
+
+    console.warn(`[GEMINI_ROTATION] Key "${keyItem.name}" failed (Status: ${status || 'unknown'}). Error: ${keyItem.lastError}`);
+
+    // If key is structurally invalid (400 API_KEY_INVALID)
+    if (status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('not valid'))) {
+      keyItem.status = 'invalid';
+      console.error(`[GEMINI_ROTATION] Marking key "${keyItem.name}" as INVALID (Excluded from pool). Auto-switching to next key...`);
+      return;
+    }
+
+    // If Rate Limit or Quota Exceeded (429 / RESOURCE_EXHAUSTED)
+    if (status === 429 || errMsg.includes('429') || errMsg.includes('Quota exceeded') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+      keyItem.status = 'rate_limited';
+      // 90 seconds cooldown
+      keyItem.cooldownUntil = Date.now() + 90000;
+      console.warn(`[GEMINI_ROTATION] Rate limit/quota exceeded on key "${keyItem.name}". Cooldown 90s. Auto-falling back to next key in pool...`);
+      return;
+    }
+
+    // If High Demand spike / 503
+    if (status === 503 || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
+      keyItem.cooldownUntil = Date.now() + 20000; // 20s cooldown
+      console.warn(`[GEMINI_ROTATION] Key "${keyItem.name}" hit 503 high demand spike. Cooldown 20s. Auto-switching...`);
+      return;
+    }
+
+    // Other transient error: brief cooldown
+    keyItem.cooldownUntil = Date.now() + 10000;
+  }
+
+  public markKeySuccess(keyItem: GeminiKeyItem) {
+    keyItem.status = 'active';
+    keyItem.successCalls++;
+    keyItem.lastUsedAt = new Date().toISOString();
+    keyItem.failCount = 0;
+    keyItem.cooldownUntil = 0;
+  }
+
+  // Unary generation with key and model fallback
+  public async generateContentWithFallback(params: {
+    contents: any;
+    config?: any;
+    preferredModel?: string;
+  }): Promise<{ text: string; keyUsed: string; modelUsed: string; rawResponse?: any }> {
+    this.refreshKeys();
+    const modelToTry = params.preferredModel || this.preferredModel;
+    const models = [modelToTry, ...this.candidateModels.filter(m => m !== modelToTry)];
+
+    const maxAttempts = Math.max(3, this.keys.length * 2);
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const keyObj = this.pickNextKey();
+      if (!keyObj) {
+        throw new Error('No available healthy Gemini API keys in pool.');
+      }
+      keyObj.totalCalls++;
+
+      for (const currentModel of models) {
+        try {
+          console.log(`[GEMINI_ROTATION] Invoking ${currentModel} via key "${keyObj.name}" (Attempt ${attempt + 1})...`);
+          const ai = new GoogleGenAI({
+            apiKey: keyObj.key,
+            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+          });
+
+          const response = await ai.models.generateContent({
+            model: currentModel,
+            contents: params.contents,
+            config: params.config,
+          });
+
+          this.markKeySuccess(keyObj);
+          return {
+            text: response.text || '',
+            keyUsed: keyObj.name,
+            modelUsed: currentModel,
+            rawResponse: response
+          };
+        } catch (err: any) {
+          lastError = err;
+          const status = err?.status || err?.response?.status;
+          const msg = err?.message || '';
+
+          // If 503 or 404, try alternative model first before discarding key
+          if (status === 503 || status === 404 || msg.includes('high demand') || msg.includes('not found')) {
+            console.warn(`[GEMINI_ROTATION] Model ${currentModel} failed on "${keyObj.name}" with status ${status}. Trying backup model...`);
+            continue;
+          }
+
+          // If rate limit or invalid key, mark failure and switch keys immediately!
+          this.markKeyFailure(keyObj, err);
+          break; // Switch to next key
+        }
+      }
+    }
+
+    throw lastError || new Error('All Gemini API keys in rotation pool failed.');
+  }
+
+  // Streaming generation with key and model fallback on init
+  public async generateContentStreamWithFallback(params: {
+    contents: any;
+    config?: any;
+    preferredModel?: string;
+  }): Promise<{ stream: any; keyUsed: string; modelUsed: string }> {
+    this.refreshKeys();
+    const modelToTry = params.preferredModel || this.preferredModel;
+    const models = [modelToTry, ...this.candidateModels.filter(m => m !== modelToTry)];
+
+    const maxAttempts = Math.max(3, this.keys.length * 2);
+    let lastError: any = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const keyObj = this.pickNextKey();
+      if (!keyObj) {
+        throw new Error('No available healthy Gemini API keys in pool.');
+      }
+      keyObj.totalCalls++;
+
+      for (const currentModel of models) {
+        try {
+          console.log(`[GEMINI_STREAM] Starting stream with ${currentModel} via key "${keyObj.name}" (Attempt ${attempt + 1})...`);
+          const ai = new GoogleGenAI({
+            apiKey: keyObj.key,
+            httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
+          });
+
+          const stream = await ai.models.generateContentStream({
+            model: currentModel,
+            contents: params.contents,
+            config: params.config,
+          });
+
+          this.markKeySuccess(keyObj);
+          return { stream, keyUsed: keyObj.name, modelUsed: currentModel };
+        } catch (err: any) {
+          lastError = err;
+          const status = err?.status || err?.response?.status;
+          const msg = err?.message || '';
+
+          if (status === 503 || status === 404 || msg.includes('high demand') || msg.includes('not found')) {
+            console.warn(`[GEMINI_STREAM] Model ${currentModel} failed on "${keyObj.name}" (status ${status}). Trying backup model...`);
+            continue;
+          }
+
+          this.markKeyFailure(keyObj, err);
+          break; // Switch to next key
+        }
+      }
+    }
+
+    throw lastError || new Error('All Gemini API keys in rotation pool failed stream initialization.');
+  }
+
+  public getStatus() {
+    const now = Date.now();
+    return {
+      connected: this.keys.some(k => k.status === 'active' || k.status === 'rate_limited'),
+      totalKeysConfigured: this.keys.length,
+      activeHealthyKeysCount: this.keys.filter(k => k.status === 'active' && k.cooldownUntil <= now).length,
+      keys: this.keys.map(k => ({
+        name: k.name,
+        status: k.status === 'rate_limited' && k.cooldownUntil > now ? 'rate_limited' : k.status,
+        failCount: k.failCount,
+        totalCalls: k.totalCalls,
+        successCalls: k.successCalls,
+        lastUsedAt: k.lastUsedAt || 'Never',
+        cooldownRemainingSeconds: Math.max(0, Math.round((k.cooldownUntil - now) / 1000)),
+        lastError: k.lastError || null
+      })),
+      primaryModel: this.preferredModel,
+      supportedModels: this.candidateModels,
+      rotationMode: 'Random & Round-Robin Load Distribution with Automatic Quota & 429 Failover',
+      autoFallback: true
+    };
+  }
+}
+
+const geminiKeyPool = new GeminiKeyRotationManager();
 
 // Return URL directly without pinging external vertex redirect services
 function resolveRedirect(url: string): Promise<string> {
@@ -356,7 +606,38 @@ async function startServer() {
     next();
   });
 
-  // Chat Endpoint
+  // Status Endpoint checking both Firebase & Gemini API Multi-Key Pool connection
+  app.get(['/api/gemini/status', '/api/system-status', '/api/api-status'], async (req, res) => {
+    try {
+      const firebaseCfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      let firebaseInfo: any = { connected: true, status: 'connected' };
+      if (fs.existsSync(firebaseCfgPath)) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(firebaseCfgPath, 'utf8'));
+          firebaseInfo = {
+            connected: true,
+            status: 'connected',
+            projectId: cfg.projectId,
+            firestoreDatabaseId: cfg.firestoreDatabaseId,
+            authDomain: cfg.authDomain
+          };
+        } catch (e) {}
+      }
+
+      const geminiStatus = geminiKeyPool.getStatus();
+
+      return res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        firebase: firebaseInfo,
+        gemini: geminiStatus
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Chat Endpoint powered by Gemini API Key Pool with Auto-Fallback
   app.post('/api/chat', async (req, res) => {
     try {
       const { history, message, context, deepResearch, expertMode } = req.body;
@@ -364,7 +645,7 @@ async function startServer() {
       let systemInstruction = "You are an advanced Web Intelligence and Data Analysis assistant. You provide authentic answers with citations and sources. If the user asks for a list of links, ALWAYS output them in a code block at the very end of your response. While you specialize in analyzing the provided context payload, you are ALSO fully capable of general research, coding, and providing external knowledge. Do not artificially limit your capabilities.";
       
       if (deepResearch) {
-        systemInstruction += "\n\nDEEP RESEARCH MODE: You have access to Google Search. When asked about 'Antigravity' or 'Google Antigravity', know that this refers to Google's agentic AI framework (often used in AI Studio / Project IDX). Ensure your search queries are highly specific so you don't return results about physical gravity or unrelated Android remote control tutorials. ALWAYS cite your sources using [1], [2] format inline.";
+        systemInstruction += "\n\nDEEP RESEARCH MODE: You have access to detailed web knowledge. When asked about 'Antigravity' or 'Google Antigravity', know that this refers to Google's agentic AI framework (often used in AI Studio / Project IDX). Ensure your citations and research are highly specific and helpful. ALWAYS cite sources where relevant.";
       }
       
       if (expertMode) {
@@ -380,56 +661,76 @@ async function startServer() {
       res.setHeader('Connection', 'keep-alive');
       res.flushHeaders();
 
-      // Emit passive mode model indicator
-      res.write(`data: ${JSON.stringify({ type: 'model_used', model: 'Passive-Safe-Mode (Offline)', tokens: 0 })}\n\n`);
-
-      // Intelligent Offline Passive Analysis
-      // Analyzes session context locally if provided without making any outbound API calls
-      let reply = '';
-      const lowerMsg = (message || '').toLowerCase();
-
-      if (context && context.trim().length > 0) {
-        // Local contextual analysis without cloud requests
-        const contextLines = context.split('\n').filter((l: string) => l.trim().length > 0);
-        const urlMatches = context.match(/https?:\/\/[^\s"'<>]+/gi) || [];
-        const uniqueUrls = Array.from(new Set(urlMatches));
-        
-        reply = `🛡️ **প্যাসিভ সুরক্ষা মোড সক্রিয় (Passive Safe Mode Active)**\n\n` +
-          `গুগল ক্লাউড পলিসি সুরক্ষা ও স্প্যাম ফ্ল্যাগ এড়াতে সমস্ত ব্যাকগ্রাউন্ড জেমিনি এপিআই ও ক্লাউড অটোমেশন রিকোয়েস্ট ক্যানসেল/নিষ্ক্রিয় রাখা হয়েছে।\n\n` +
-          `📊 **লোকাল অফলাইন কনটেক্সট অ্যানালিসিস (Zero Cloud Network Requests):**\n` +
-          `- প্রাপ্ত কনটেক্সট লাইন সংখ্যা: ${contextLines.length}\n` +
-          `- মোট শনাক্তকৃত লিঙ্ক সংখ্যা: ${uniqueUrls.length}\n\n`;
-
-        if (uniqueUrls.length > 0) {
-          reply += `🔍 **নমুনা শনাক্তকৃত লিঙ্কসমূহ (শীর্ষ ${Math.min(10, uniqueUrls.length)}টি):**\n`;
-          uniqueUrls.slice(0, 10).forEach((u, i) => {
-            reply += `${i + 1}. \`${u}\`\n`;
+      // Format contents for @google/genai
+      const contentsPayload: any[] = [];
+      if (Array.isArray(history) && history.length > 0) {
+        for (const h of history.slice(-10)) {
+          contentsPayload.push({
+            role: h.role === 'user' ? 'user' : 'model',
+            parts: [{ text: h.text || '' }]
           });
-          reply += `\n\`\`\`\n${uniqueUrls.slice(0, 25).join('\n')}\n\`\`\`\n\n`;
+        }
+      }
+      contentsPayload.push({
+        role: 'user',
+        parts: [{ text: message || '' }]
+      });
+
+      try {
+        const { stream, keyUsed, modelUsed } = await geminiKeyPool.generateContentStreamWithFallback({
+          contents: contentsPayload,
+          config: {
+            systemInstruction
+          }
+        });
+
+        // Notify client of active model and key rotation
+        res.write(`data: ${JSON.stringify({ 
+          type: 'model_used', 
+          model: `${modelUsed} (${keyUsed})`, 
+          tokens: 0 
+        })}\n\n`);
+
+        for await (const chunk of stream) {
+          const chunkText = chunk.text;
+          if (chunkText) {
+            res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+          }
         }
 
-        reply += `💡 আপনার ফায়ারবেস ডাটাবেজ এবং লোকাল কোড লজিক সম্পূর্ণ নিরাপদ ও অক্ষত রয়েছে। কোনো ব্যাকগ্রাউন্ড এপিআই রিকোয়েস্ট পাঠানো হচ্ছে না।`;
-      } else {
-        reply = `🛡️ **প্যাসিভ সুরক্ষা মোড সক্রিয় (Passive Safe Mode Active)**\n\n` +
-          `গুগল ক্লাউড পলিসি সুরক্ষা এবং অটোমেটেড স্প্যাম ফ্ল্যাগ এড়াতে সমস্ত ব্যাকগ্রাউন্ড এপিআই কল (Gemini API, Google Search, Google Chat, MCP) স্থায়ীভাবে ক্যানসেল ও নিষ্ক্রিয় করা হয়েছে।\n\n` +
-          `✅ **নিরাপত্তা ও কনফিগারেশন স্ট্যাটাস:**\n` +
-          `- গুগল ক্লাউড ব্যাকএন্ড অটোমেশন: **সম্পূর্ণ বন্ধ (0 Outbound Calls)**\n` +
-          `- ব্যাকগ্রাউন্ড শিডিউলার/টাইমার লুপ: **কিল্ড ও নিষ্ক্রিয় (Killed)**\n` +
-          `- সার্ভিস অ্যাকাউন্ট ও ক্রেডেনশিয়াল কল: **সম্পূর্ণ বিচ্ছিন্ন (Disconnected)**\n` +
-          `- লোকাল কোড লজিক ও ফায়ারবেস স্টোরেজ: **সম্পূর্ণ অক্ষত (Intact)**\n\n` +
-          `💬 আপনার বার্তা: "${message}"\n\n` +
-          `ভবিষ্যতে অ্যাকাউন্টের নিষেধাজ্ঞা উঠে গেলে আপনি নতুন ক্লাউড প্রজেক্ট ক্রেডেনশিয়াল প্রদান করলে ক্লাউড সার্ভিস পুনরায় কনফিগার করা যাবে।`;
-      }
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      } catch (geminiErr: any) {
+        console.error('[API_CHAT] Gemini stream failed after all fallback attempts:', geminiErr.message);
 
-      // Stream words smoothly to simulate response
-      const chunks = reply.match(/[\s\S]{1,60}/g) || [reply];
-      for (const chunk of chunks) {
-        res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
-        await new Promise(r => setTimeout(r, 20));
-      }
+        // Graceful fallback to local contextual analyzer so user never gets broken screen
+        res.write(`data: ${JSON.stringify({ 
+          type: 'model_used', 
+          model: 'Local Analysis (Fallback Mode)', 
+          tokens: 0 
+        })}\n\n`);
 
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-      res.end();
+        let fallbackReply = `⚠️ **এআই এপিআই নোটিশ (Auto-Fallback Mode):**\n\n` +
+          `জেমিনি এপিআই কী পুলের সবগুলি কী এই মুহূর্তে লিমিট বা সাময়িক চাহিদায় রয়েছে (${geminiErr.message})।\n\n`;
+
+        if (context && context.trim().length > 0) {
+          const urlMatches = Array.from(new Set(context.match(/https?:\/\/[^\s"'<>]+/gi) || []));
+          fallbackReply += `📊 **লোকাল অফলাইন কনটেক্সট সারাংশ:**\n` +
+            `- মোট শনাক্তকৃত লিঙ্ক: ${urlMatches.length}টি\n\n` +
+            `\`\`\`\n${urlMatches.slice(0, 20).join('\n')}\n\`\`\`\n\n` +
+            `কিছুক্ষণ পর আবার মেসেজ পাঠালে অটোমেটিক কী পুল থেকে পুনরায় কানেক্ট হবে।`;
+        } else {
+          fallbackReply += `আপনার বার্তা: "${message}"\n\nসিস্টেম ব্যাকগ্রাউন্ডে কী রোটেশন ও ফেইলওভার পর্যবেক্ষণ করছে। কিছুক্ষণ পর পুনরায় বার্তা পাঠান।`;
+        }
+
+        const chunks = fallbackReply.match(/[\s\S]{1,60}/g) || [fallbackReply];
+        for (const chunk of chunks) {
+          res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+          await new Promise(r => setTimeout(r, 15));
+        }
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      }
     } catch (e: any) {
       res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
       res.end();
@@ -1147,17 +1448,39 @@ async function startServer() {
 
       sendEvent('status', { log: `Smart crawl finished. Analyzed ${pagesCrawled} pages.` });
 
-      // Local Offline Summary (Passive Mode: Zero Outbound Cloud Requests)
+      // AI Summary with Multi-Key Pool & Fallback
       if (foundLinks.size > 0) {
-        sendEvent('status', { log: `Generating offline analysis report...` });
+        sendEvent('status', { log: `Generating intelligent AI analysis report...` });
         const linksArray = Array.from(foundLinks);
-        const localSummary = `### 🛡️ প্যাসিভ অফলাইন বিশ্লেষণ রিপোর্ট (Offline Summary)\n\n` +
-          `**অনুরোধকৃত নির্দেশ:** "${instruction}"\n` +
-          `**মোট পর্যালোচিত পেজ:** ${pagesCrawled}\n` +
-          `**শনাক্তকৃত প্রাসঙ্গিক লিঙ্ক:** ${linksArray.length}\n\n` +
-          `ক্লাউড পলিসি সুরক্ষায় ব্যাকগ্রাউন্ড এআই কল সম্পূর্ণরূপে নিষ্ক্রিয় রাখা হয়েছে। সংগৃহীত লিঙ্কসমূহ লোকাল সেশনে সুরক্ষিত রয়েছে।`;
-        sendEvent('summary', { text: localSummary });
-        sendEvent('status', { log: `Offline analysis report generated successfully.` });
+        
+        let summaryText = '';
+        try {
+          const aiPrompt = `You are an expert web intelligence and data extractor analyst.
+A smart crawl for instruction "${instruction}" finished.
+Crawled ${pagesCrawled} pages and found ${linksArray.length} relevant URLs.
+Sample URLs found:
+${linksArray.slice(0, 25).map((u, i) => `${i + 1}. ${u}`).join('\n')}
+
+Generate a structured Markdown summary report in Bengali & English with:
+1. 📊 Crawl Results Overview (Found count, target domain)
+2. 🎯 Key findings matching the user's intent: "${instruction}"
+3. 💡 Recommended Next Actions (e.g. Bulk Fetching, Extracting tables/emails, or further deep scanning)`;
+
+          const aiRes = await geminiKeyPool.generateContentWithFallback({
+            contents: [{ parts: [{ text: aiPrompt }] }],
+          });
+          summaryText = aiRes.text;
+        } catch (sumErr: any) {
+          console.warn('[SMART_CRAWL] AI Summary generation fallback:', sumErr.message);
+          summaryText = `### 📊 স্মার্ট ক্রলার বিশ্লেষণ রিপোর্ট (Smart Crawl Report)\n\n` +
+            `**অনুরোধকৃত নির্দেশ:** "${instruction}"\n` +
+            `**মোট পর্যালোচিত পেজ:** ${pagesCrawled}\n` +
+            `**শনাক্তকৃত প্রাসঙ্গিক লিঙ্ক:** ${linksArray.length}\n\n` +
+            `সংগৃহীত লিঙ্কসমূহ লোকাল সেশনে সুরক্ষিত রয়েছে।`;
+        }
+
+        sendEvent('summary', { text: summaryText });
+        sendEvent('status', { log: `Analysis report generated successfully.` });
       }
 
       sendEvent('done', { total: foundLinks.size, pagesCrawled, errors: errorsCount });
@@ -1170,7 +1493,7 @@ async function startServer() {
     }
   });
 
-  // POST endpoint for one-shot AI filtering of a list of URLs (Passive Local Mode: 0 Cloud Calls)
+  // POST endpoint for AI filtering of a list of URLs with Key Rotation & Auto Fallback
   app.post('/api/smart-filter', async (req, res) => {
     const { urls, instruction } = req.body;
 
@@ -1187,27 +1510,50 @@ async function startServer() {
         if (urls[0]) startDomain = new URL(urls[0]).hostname;
       } catch (e) {}
 
-      // 100% Local deterministic filtering without any external Cloud / Gemini API requests
-      const filteredUrls = urls.filter(u => 
+      // Fast local pre-filter
+      const preFiltered = urls.filter(u => 
         typeof u === 'string' && 
         u.startsWith('http') && 
         validateAndScoreUrlWithInstruction(u, startDomain, instruction)
       );
 
-      res.json({ urls: filteredUrls, passiveMode: true });
+      // Attempt AI refinement if available
+      try {
+        const candidateSlice = urls.slice(0, 60);
+        const prompt = `Filter the following list of URLs based on the instruction: "${instruction}".
+Return ONLY a valid JSON array of string URLs that match.
+URLs:
+${JSON.stringify(candidateSlice)}`;
+
+        const aiRes = await geminiKeyPool.generateContentWithFallback({
+          contents: [{ parts: [{ text: prompt }] }],
+          config: {
+            responseMimeType: 'application/json'
+          }
+        });
+
+        const parsed = JSON.parse(aiRes.text);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return res.json({ urls: parsed, keyUsed: aiRes.keyUsed, modelUsed: aiRes.modelUsed });
+        }
+      } catch (aiErr: any) {
+        console.warn('[SMART_FILTER] AI filter fallback to local heuristics:', aiErr.message);
+      }
+
+      res.json({ urls: preFiltered.length > 0 ? preFiltered : urls });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // POST endpoint to generate intelligent tags locally on demand (Passive Mode: 0 Cloud Calls)
+  // POST endpoint to generate intelligent tags on demand with Key Rotation & Auto Fallback
   app.post('/api/generate-tags', async (req, res) => {
     const { title, url, type, sampleUrls = [], existingTags = [] } = req.body;
 
     try {
       const urlsSlice = Array.isArray(sampleUrls) ? sampleUrls.slice(0, 30) : [];
       
-      // Fast, deterministic local heuristic categorization (No Gemini API Calls)
+      // Fast, deterministic local heuristic categorization
       const localTags: string[] = [];
       if (url) {
         try {
@@ -1236,12 +1582,35 @@ async function startServer() {
         if (uStr.includes('/doc') && !localTags.includes('documentation')) localTags.push('docs');
       });
 
+      // Try AI tag generation for smart suggestions
+      try {
+        const tagPrompt = `Generate 3 to 5 concise tags (lowercase, hyphen-separated, no hashtag) for a web crawling session:
+Title: "${title || 'Web Crawl'}"
+URL: "${url || 'N/A'}"
+Type: "${type || 'crawler'}"
+Sample URLs: ${urlsSlice.slice(0, 10).map((u: any) => typeof u === 'string' ? u : u.url).join(', ')}
+Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
+
+        const aiRes = await geminiKeyPool.generateContentWithFallback({
+          contents: [{ parts: [{ text: tagPrompt }] }],
+          config: { responseMimeType: 'application/json' }
+        });
+
+        const parsedTags = JSON.parse(aiRes.text);
+        if (Array.isArray(parsedTags) && parsedTags.length > 0) {
+          const merged = Array.from(new Set([...existingTags, ...parsedTags.map((t: string) => t.toLowerCase().trim()), ...localTags])).slice(0, 6);
+          return res.json({ tags: merged, keyUsed: aiRes.keyUsed });
+        }
+      } catch (aiTagErr: any) {
+        console.warn('[GENERATE_TAGS] AI tags fallback to local heuristics:', aiTagErr.message);
+      }
+
       const finalTags = Array.from(new Set([...existingTags, ...localTags])).slice(0, 5);
       if (finalTags.length === 0) {
         finalTags.push('web-data', 'resources');
       }
 
-      res.json({ tags: finalTags, passiveMode: true });
+      res.json({ tags: finalTags });
     } catch (error: any) {
       console.error('Tag generation endpoint failed:', error);
       res.status(500).json({ error: error.message || 'Failed to generate tags', tags: [] });

@@ -79,6 +79,7 @@ export interface Session {
   instruction?: string;
   aiSummary?: string;
   notes?: string;
+  description?: string;
   createdAt: any;
   updatedAt: any;
 }

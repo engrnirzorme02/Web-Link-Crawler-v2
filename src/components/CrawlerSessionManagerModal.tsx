@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { 
   FolderOpen, Save, Trash2, Calendar, FileText, Globe, 
   Download, Upload, Check, AlertCircle, X, Search, Clock,
-  ExternalLink, Layers, ArrowRight, ShieldCheck, Sparkles
+  ExternalLink, Layers, ArrowRight, ShieldCheck, Sparkles,
+  Smartphone, HardDrive, Tag, Cloud, CloudOff
 } from 'lucide-react';
 import { Session, db } from '../lib/firebase';
 import { formatDistanceToNow } from 'date-fns';
@@ -33,7 +34,29 @@ interface CrawlerSessionManagerModalProps {
   };
   currentResults: any[];
   onLoadSession: (session: Session) => void;
-  onExportCurrent: (format: 'csv' | 'json') => void;
+  onExportCurrent: (format: 'csv' | 'json' | 'txt') => void;
+}
+
+const OFFLINE_SESSIONS_KEY = 'crawler_offline_sessions_v2';
+
+function getStoredLocalSessions(): Session[] {
+  try {
+    if (typeof window === 'undefined') return [];
+    const item = localStorage.getItem(OFFLINE_SESSIONS_KEY);
+    return item ? JSON.parse(item) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function persistLocalSessions(list: Session[]) {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(OFFLINE_SESSIONS_KEY, JSON.stringify(list));
+    }
+  } catch (err) {
+    console.error('Failed to write offline sessions to localStorage', err);
+  }
 }
 
 export function CrawlerSessionManagerModal({
@@ -50,16 +73,50 @@ export function CrawlerSessionManagerModal({
   const [activeTab, setActiveTab] = useState<'saved' | 'save_new' | 'export_backup'>('saved');
   const [sessionTitleInput, setSessionTitleInput] = useState(activeSession?.title || '');
   const [saveDescription, setSaveDescription] = useState('');
+  const [saveTagsInput, setSaveTagsInput] = useState(activeSession?.tags?.join(', ') || '');
+  const [saveToLocalOnly, setSaveToLocalOnly] = useState(!userId);
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [saving, setSaving] = useState(false);
   const [statusFeedback, setStatusFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [localSessions, setLocalSessions] = useState<Session[]>(() => getStoredLocalSessions());
+
+  useEffect(() => {
+    if (isOpen) {
+      setLocalSessions(getStoredLocalSessions());
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
-  const crawlerSessions = sessions.filter(s => s.type === 'crawler' || s.type === 'smart_crawler');
+  // Combine Cloud sessions and Local offline sessions
+  const mergedSessions = useMemo(() => {
+    const cloud = sessions.filter(s => s.type === 'crawler' || s.type === 'smart_crawler');
+    const map = new Map<string, Session>();
+    cloud.forEach(s => {
+      if (s.id) map.set(s.id, s);
+    });
+    localSessions.forEach(s => {
+      if (s.id) {
+        map.set(s.id, { ...s, isOfflineLocal: true } as any);
+      }
+    });
+    return Array.from(map.values());
+  }, [sessions, localSessions]);
 
-  const filteredSessions = crawlerSessions.filter(s => {
+  // Extract all distinct tags across sessions for quick chip filter
+  const allDistinctTags = useMemo(() => {
+    const tagSet = new Set<string>();
+    mergedSessions.forEach(s => {
+      (s.tags || []).forEach(t => tagSet.add(t));
+    });
+    return Array.from(tagSet);
+  }, [mergedSessions]);
+
+  const filteredSessions = mergedSessions.filter(s => {
+    if (selectedTagFilter && (!s.tags || !s.tags.includes(selectedTagFilter))) return false;
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (s.title && s.title.toLowerCase().includes(q)) ||
@@ -68,11 +125,6 @@ export function CrawlerSessionManagerModal({
   });
 
   const handleSaveCurrentSession = async () => {
-    if (!userId) {
-      setStatusFeedback({ type: 'error', message: 'You must be signed in to save sessions to Cloud storage.' });
-      return;
-    }
-
     if (!currentSettings.url && currentResults.length === 0) {
       setStatusFeedback({ type: 'error', message: 'Please provide at least a Target URL or run a crawl before saving.' });
       return;
@@ -81,44 +133,103 @@ export function CrawlerSessionManagerModal({
     setSaving(true);
     setStatusFeedback(null);
 
-    try {
-      let defaultTitle = `Crawl: ${currentSettings.url ? extractSafeHostname(currentSettings.url, 'Workspace') : 'Workspace'}`;
-      const titleToSave = sessionTitleInput.trim() || defaultTitle;
+    const defaultTitle = `Crawl: ${currentSettings.url ? extractSafeHostname(currentSettings.url, 'Workspace') : 'Workspace'}`;
+    const titleToSave = sessionTitleInput.trim() || defaultTitle;
+    const parsedTags = saveTagsInput
+      .split(',')
+      .map(t => t.trim().replace(/^#/, ''))
+      .filter(Boolean);
 
-      if (activeSession && activeSession.id) {
-        // Update existing session
-        await updateDoc(doc(db, 'sessions', activeSession.id), {
-          title: titleToSave,
-          url: currentSettings.url,
-          results: currentResults,
-          settings: currentSettings,
-          updatedAt: serverTimestamp(),
-          description: saveDescription.trim() || undefined
-        });
-        setStatusFeedback({ type: 'success', message: `Updated session "${titleToSave}" successfully!` });
-      } else {
-        // Create new session
-        const newDoc = await addDoc(collection(db, 'sessions'), {
-          userId,
-          type: 'crawler',
-          title: titleToSave,
-          url: currentSettings.url,
-          results: currentResults,
-          logs: [],
-          settings: currentSettings,
-          description: saveDescription.trim() || undefined,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-        setStatusFeedback({ type: 'success', message: `Saved new session "${titleToSave}" to Cloud!` });
+    try {
+      // 1. If user is authenticated and hasn't opted for local only, sync to Firebase
+      if (userId && !saveToLocalOnly) {
+        if (activeSession && activeSession.id && !activeSession.id.startsWith('offline_')) {
+          await updateDoc(doc(db, 'sessions', activeSession.id), {
+            title: titleToSave,
+            url: currentSettings.url,
+            results: currentResults,
+            settings: currentSettings,
+            tags: parsedTags.length > 0 ? parsedTags : (activeSession.tags || []),
+            updatedAt: serverTimestamp(),
+            description: saveDescription.trim() || undefined
+          });
+        } else {
+          await addDoc(collection(db, 'sessions'), {
+            userId,
+            type: 'crawler',
+            title: titleToSave,
+            url: currentSettings.url,
+            results: currentResults,
+            logs: [],
+            settings: currentSettings,
+            tags: parsedTags,
+            description: saveDescription.trim() || undefined,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
       }
+
+      // 2. Always persist to Android local device storage (offline fallback)
+      const offlineDoc: Session = {
+        id: 'offline_' + Date.now(),
+        userId: userId || 'local_device',
+        type: 'crawler',
+        title: titleToSave,
+        url: currentSettings.url,
+        results: currentResults,
+        logs: [],
+        settings: currentSettings,
+        tags: parsedTags,
+        description: saveDescription.trim() || undefined,
+        createdAt: new Date().toISOString() as any,
+        updatedAt: new Date().toISOString() as any,
+      };
+
+      const updatedLocal = [offlineDoc, ...localSessions.filter(s => s.title !== titleToSave)];
+      setLocalSessions(updatedLocal);
+      persistLocalSessions(updatedLocal);
+
+      setStatusFeedback({
+        type: 'success',
+        message: userId && !saveToLocalOnly
+          ? `Saved "${titleToSave}" to Cloud & Local Android Storage!`
+          : `Saved "${titleToSave}" locally on Android device (Offline Ready)!`
+      });
+
       setTimeout(() => {
         setStatusFeedback(null);
         setActiveTab('saved');
       }, 1500);
     } catch (err: any) {
-      console.error('Save session error:', err);
-      setStatusFeedback({ type: 'error', message: err.message || 'Failed to save session.' });
+      console.warn('Cloud save error, falling back to local storage:', err);
+      // Fallback save to local device storage
+      const fallbackDoc: Session = {
+        id: 'offline_' + Date.now(),
+        userId: userId || 'local_device',
+        type: 'crawler',
+        title: titleToSave,
+        url: currentSettings.url,
+        results: currentResults,
+        logs: [],
+        settings: currentSettings,
+        tags: parsedTags,
+        description: saveDescription.trim() || undefined,
+        createdAt: new Date().toISOString() as any,
+        updatedAt: new Date().toISOString() as any,
+      };
+      const updatedLocal = [fallbackDoc, ...localSessions];
+      setLocalSessions(updatedLocal);
+      persistLocalSessions(updatedLocal);
+
+      setStatusFeedback({
+        type: 'success',
+        message: `Saved locally on Android device (${err.message ? 'offline mode' : 'local storage'})!`
+      });
+      setTimeout(() => {
+        setStatusFeedback(null);
+        setActiveTab('saved');
+      }, 1500);
     } finally {
       setSaving(false);
     }
@@ -128,8 +239,15 @@ export function CrawlerSessionManagerModal({
     e.stopPropagation();
     if (!confirm('Are you sure you want to delete this crawl session configuration?')) return;
     try {
-      await deleteDoc(doc(db, 'sessions', id));
-      setStatusFeedback({ type: 'success', message: 'Session deleted.' });
+      if (id.startsWith('offline_')) {
+        const next = localSessions.filter(s => s.id !== id);
+        setLocalSessions(next);
+        persistLocalSessions(next);
+        setStatusFeedback({ type: 'success', message: 'Local device session removed.' });
+      } else {
+        await deleteDoc(doc(db, 'sessions', id));
+        setStatusFeedback({ type: 'success', message: 'Cloud session deleted.' });
+      }
       setTimeout(() => setStatusFeedback(null), 2000);
     } catch (err: any) {
       setStatusFeedback({ type: 'error', message: 'Failed to delete session.' });
@@ -255,7 +373,7 @@ export function CrawlerSessionManagerModal({
             )}
           >
             <FolderOpen className="w-4 h-4" />
-            Saved Sessions ({crawlerSessions.length})
+            Saved Sessions ({mergedSessions.length})
           </button>
           <button
             onClick={() => setActiveTab('save_new')}
@@ -286,17 +404,17 @@ export function CrawlerSessionManagerModal({
         {/* Content Body */}
         <div className="p-5 flex-1 overflow-y-auto custom-scrollbar">
           {activeTab === 'saved' && (
-            <div className="space-y-4">
+            <div className="space-y-3.5">
               {/* Search Bar & Import Button */}
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
                   <input
                     type="text"
-                    placeholder="Search saved crawl sessions..."
+                    placeholder="Search sessions by name, URL, or #tag..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="w-full pl-9 pr-3 py-2.5 text-xs rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700 text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-1 focus:ring-blue-500 min-h-[44px]"
                   />
                 </div>
                 <input 
@@ -308,13 +426,45 @@ export function CrawlerSessionManagerModal({
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-2 text-xs font-medium rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300 shrink-0"
+                  className="px-3.5 py-2.5 text-xs font-medium rounded-xl border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300 shrink-0 min-h-[44px]"
                   title="Import from JSON file"
                 >
                   <Upload className="w-3.5 h-3.5 text-blue-500" />
                   <span>Import JSON</span>
                 </button>
               </div>
+
+              {/* Tag Quick Filter Chips */}
+              {allDistinctTags.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+                  <button
+                    onClick={() => setSelectedTagFilter(null)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors",
+                      selectedTagFilter === null
+                        ? "bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-900 font-semibold"
+                        : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200"
+                    )}
+                  >
+                    All ({mergedSessions.length})
+                  </button>
+                  {allDistinctTags.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={() => setSelectedTagFilter(selectedTagFilter === tag ? null : tag)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-colors flex items-center gap-1",
+                        selectedTagFilter === tag
+                          ? "bg-blue-600 text-white font-semibold shadow-2xs"
+                          : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200"
+                      )}
+                    >
+                      <Tag className="w-3 h-3 opacity-60" />
+                      <span>{tag}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Sessions List */}
               {filteredSessions.length === 0 ? (
@@ -361,12 +511,33 @@ export function CrawlerSessionManagerModal({
                                 ACTIVE
                               </span>
                             )}
+                            {(s as any).isOfflineLocal || (s.id && s.id.startsWith('offline_')) ? (
+                              <span className="text-[10px] font-semibold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0 border border-purple-200/50 dark:border-purple-800/50">
+                                <Smartphone className="w-2.5 h-2.5" />
+                                <span>Device</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0 border border-blue-200/50 dark:border-blue-800/50">
+                                <Cloud className="w-2.5 h-2.5" />
+                                <span>Cloud</span>
+                              </span>
+                            )}
                           </div>
                           
                           {s.url && (
-                            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-mono truncate mb-2">
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-mono truncate mb-1.5">
                               {s.url}
                             </p>
+                          )}
+
+                          {s.tags && s.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mb-2">
+                              {s.tags.map(t => (
+                                <span key={t} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 rounded font-mono">
+                                  #{t}
+                                </span>
+                              ))}
+                            </div>
                           )}
 
                           <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -397,7 +568,7 @@ export function CrawlerSessionManagerModal({
                         <div className="flex items-center gap-1.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-100 dark:border-zinc-700/50">
                           <button
                             onClick={(e) => handleExportSingleSessionJSON(s, e)}
-                            className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                            className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors flex items-center justify-center"
                             title="Export session JSON"
                           >
                             <Download className="w-4 h-4" />
@@ -405,13 +576,13 @@ export function CrawlerSessionManagerModal({
                           {s.id && (
                             <button
                               onClick={(e) => handleDeleteSession(s.id!, e)}
-                              className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                              className="p-2 min-h-[44px] min-w-[44px] rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors flex items-center justify-center"
                               title="Delete session"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
                           )}
-                          <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold ml-1 group-hover:scale-105 transition-transform">
+                          <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold ml-1 group-hover:scale-105 transition-transform">
                             <ArrowRight className="w-4 h-4" />
                           </div>
                         </div>
@@ -452,7 +623,21 @@ export function CrawlerSessionManagerModal({
                   placeholder="e.g. Documentation Spider - Docs v4"
                   value={sessionTitleInput}
                   onChange={(e) => setSessionTitleInput(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Custom Tags (comma separated)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. mobile, research, api, production"
+                  value={saveTagsInput}
+                  onChange={(e) => setSaveTagsInput(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-800 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[44px]"
                 />
               </div>
 
@@ -469,11 +654,41 @@ export function CrawlerSessionManagerModal({
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2">
+              {/* Local vs Cloud Storage Choice */}
+              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 rounded-xl space-y-2">
+                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block">
+                  Storage Location
+                </span>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2.5 cursor-pointer text-xs text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="radio"
+                      name="storageTarget"
+                      checked={!saveToLocalOnly}
+                      onChange={() => setSaveToLocalOnly(false)}
+                      disabled={!userId}
+                      className="text-blue-600"
+                    />
+                    <span>Cloud & Local Mirror {userId ? '(Firebase Synced)' : '(Requires Sign-in)'}</span>
+                  </label>
+                  <label className="flex items-center gap-2.5 cursor-pointer text-xs text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="radio"
+                      name="storageTarget"
+                      checked={saveToLocalOnly}
+                      onChange={() => setSaveToLocalOnly(true)}
+                      className="text-blue-600"
+                    />
+                    <span className="font-medium text-purple-700 dark:text-purple-300">Local Android Device Only (Instant Offline Fallback)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 pb-safe">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-xl transition-colors min-h-[44px]"
                 >
                   Cancel
                 </button>
@@ -481,17 +696,17 @@ export function CrawlerSessionManagerModal({
                   type="button"
                   disabled={saving}
                   onClick={handleSaveCurrentSession}
-                  className="px-5 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-50 rounded-xl transition-all shadow-md inline-flex items-center gap-2"
+                  className="px-5 py-2.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 active:scale-95 disabled:opacity-50 rounded-xl transition-all shadow-md inline-flex items-center gap-2 min-h-[44px]"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{saving ? 'Saving...' : (activeSession ? 'Save & Update Session' : 'Save New Session')}</span>
+                  <span>{saving ? 'Saving...' : (activeSession ? 'Save & Update Session' : 'Save Session')}</span>
                 </button>
               </div>
             </div>
           )}
 
           {activeTab === 'export_backup' && (
-            <div className="space-y-4">
+            <div className="space-y-4 pb-safe">
               <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 space-y-3">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
                   Export Discovered URLs
@@ -500,14 +715,26 @@ export function CrawlerSessionManagerModal({
                   Instantly export all {currentResults.length} discovered URLs from your active crawling session to standard formats.
                 </p>
 
-                <div className="grid grid-cols-2 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                  <button
+                    onClick={() => onExportCurrent('txt')}
+                    disabled={currentResults.length === 0}
+                    className="p-3.5 min-h-[48px] rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-blue-500 dark:hover:border-blue-500 transition-all text-left group disabled:opacity-50"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">Plain Text</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold">.txt</span>
+                    </div>
+                    <p className="text-[11px] text-zinc-500">Pure clean URLs one per line for mobile clipboard & scripts.</p>
+                  </button>
+
                   <button
                     onClick={() => onExportCurrent('csv')}
                     disabled={currentResults.length === 0}
-                    className="p-3.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-emerald-500 dark:hover:border-emerald-500 transition-all text-left group disabled:opacity-50"
+                    className="p-3.5 min-h-[48px] rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-emerald-500 dark:hover:border-emerald-500 transition-all text-left group disabled:opacity-50"
                   >
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">CSV Spreadsheet</span>
+                      <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">CSV Sheet</span>
                       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-bold">.csv</span>
                     </div>
                     <p className="text-[11px] text-zinc-500">Structured tabular data with URL, Source, and Status.</p>
@@ -516,13 +743,13 @@ export function CrawlerSessionManagerModal({
                   <button
                     onClick={() => onExportCurrent('json')}
                     disabled={currentResults.length === 0}
-                    className="p-3.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-blue-500 dark:hover:border-blue-500 transition-all text-left group disabled:opacity-50"
+                    className="p-3.5 min-h-[48px] rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-purple-500 dark:hover:border-purple-500 transition-all text-left group disabled:opacity-50"
                   >
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200">JSON Array</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 font-bold">.json</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold">.json</span>
                     </div>
-                    <p className="text-[11px] text-zinc-500">Standard clean JSON array format ready for API pipelines.</p>
+                    <p className="text-[11px] text-zinc-500">Clean JSON array format ready for API pipelines.</p>
                   </button>
                 </div>
               </div>

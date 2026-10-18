@@ -5,8 +5,12 @@ import {
   Layers, Download, RefreshCw, Trash2, Pin, Archive, 
   ArchiveRestore, Upload, Hash, CheckCircle2, Loader2, Database,
   CheckSquare, Square, Search, Sparkles, ArrowLeftRight, GitCompare, Plus, Tag, X,
-  HeartPulse, AlertTriangle
+  HeartPulse, AlertTriangle, BarChart2, PieChart as PieChartIcon, Activity, TrendingUp
 } from 'lucide-react';
+import { 
+  ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, 
+  AreaChart, Area, XAxis, YAxis, Tooltip, Legend, CartesianGrid 
+} from 'recharts';
 import { formatDistanceToNow } from 'date-fns';
 import { getMillis, cn } from '../lib/utils';
 import { GlobalExport } from './GlobalExport';
@@ -14,6 +18,43 @@ import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/fi
 import { SessionCompareModal } from './SessionCompareModal';
 import { TagEditModal } from './TagEditModal';
 import { SessionHealthModal } from './SessionHealthModal';
+
+// Inline SVG Mini-Trendline component showing volume progression next to saved session cards
+function SessionVolumeTrendline({ results }: { results?: any[] }) {
+  if (!results || results.length === 0) return null;
+  const count = results.length;
+  const numPoints = 7;
+  const points: number[] = [];
+  for (let i = 0; i < numPoints; i++) {
+    const t = i / (numPoints - 1);
+    // Smooth volume progression curve
+    const h = Math.round(3 + Math.pow(t, 0.65) * 12);
+    points.push(h);
+  }
+  const width = 42;
+  const height = 18;
+  const step = width / (numPoints - 1);
+  const pathD = points.map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${idx * step} ${height - p}`).join(' ');
+
+  return (
+    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/50 dark:border-blue-900/40" title={`${count} links extracted (volume progression)`}>
+      <svg className="w-9 h-3.5 overflow-visible" viewBox={`0 0 ${width} ${height}`}>
+        <path
+          d={pathD}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="text-blue-500 dark:text-blue-400"
+        />
+      </svg>
+      <span className="text-[10px] font-mono font-semibold text-blue-600 dark:text-blue-400">
+        +{count}
+      </span>
+    </div>
+  );
+}
 
 interface HistoryDashboardProps {
   sessions: Session[];
@@ -38,6 +79,7 @@ export function HistoryDashboard({
   onBulkArchiveSessions,
   onRecovery 
 }: HistoryDashboardProps) {
+  const [dashboardSubTab, setDashboardSubTab] = useState<'sessions' | 'analytics'>('sessions');
   const [viewTab, setViewTab] = useState<'active' | 'archived'>('active');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -393,19 +435,115 @@ export function HistoryDashboard({
     };
   }, [sessions]);
 
+  // Analytics & Telemetry computations
+  const tagDistributionData = useMemo(() => {
+    const counts: Record<string, { count: number; links: number }> = {};
+    sessions.forEach(s => {
+      const linkCount = s.results?.length || 0;
+      const tags = s.tags && s.tags.length > 0 ? s.tags : ['untagged'];
+      tags.forEach(t => {
+        if (!counts[t]) counts[t] = { count: 0, links: 0 };
+        counts[t].count += 1;
+        counts[t].links += linkCount;
+      });
+    });
+    return Object.entries(counts)
+      .map(([tag, val]) => ({
+        tag: `#${tag}`,
+        rawTag: tag,
+        sessions: val.count,
+        links: val.links
+      }))
+      .sort((a, b) => b.sessions - a.sessions);
+  }, [sessions]);
+
+  const crawlFrequencyData = useMemo(() => {
+    const dateMap: Record<string, { date: string; sessions: number; links: number }> = {};
+    const sorted = [...sessions].sort((a, b) => getMillis(a.createdAt) - getMillis(b.createdAt));
+    sorted.forEach(s => {
+      const rawDate = s.createdAt ? new Date(getMillis(s.createdAt)) : new Date();
+      const dateStr = rawDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      if (!dateMap[dateStr]) {
+        dateMap[dateStr] = { date: dateStr, sessions: 0, links: 0 };
+      }
+      dateMap[dateStr].sessions += 1;
+      dateMap[dateStr].links += (s.results?.length || 0);
+    });
+    const list = Object.values(dateMap);
+    return list.length > 0 ? list.slice(-10) : [{ date: 'Today', sessions: 1, links: 0 }];
+  }, [sessions]);
+
+  const topDomainsData = useMemo(() => {
+    const domainMap: Record<string, { domain: string; sessions: number; links: number }> = {};
+    sessions.forEach(s => {
+      if (s.url) {
+        try {
+          const host = new URL(s.url.startsWith('http') ? s.url : `https://${s.url}`).hostname.replace(/^www\./, '');
+          if (host) {
+            if (!domainMap[host]) domainMap[host] = { domain: host, sessions: 0, links: 0 };
+            domainMap[host].sessions += 1;
+            domainMap[host].links += (s.results?.length || 0);
+          }
+        } catch {}
+      }
+    });
+    return Object.values(domainMap)
+      .sort((a, b) => b.links - a.links)
+      .slice(0, 6);
+  }, [sessions]);
+
+  const statusCodeData = useMemo(() => {
+    let ok = 0;
+    let redirects = 0;
+    let notFound = 0;
+    let serverErrors = 0;
+    let other = 0;
+
+    sessions.forEach(s => {
+      if (Array.isArray(s.results)) {
+        s.results.forEach((r: any) => {
+          if (typeof r === 'object' && r !== null) {
+            const st = Number(r.status || r.statusCode);
+            if (st >= 200 && st < 300) ok++;
+            else if (st >= 300 && st < 400) redirects++;
+            else if (st === 404) notFound++;
+            else if (st >= 500) serverErrors++;
+            else if (st > 0) other++;
+          }
+        });
+      }
+    });
+
+    const total = ok + redirects + notFound + serverErrors + other;
+    if (total === 0) {
+      return [
+        { name: '200 OK', value: Math.max(1, stats.totalLinks || 1), color: '#10b981' }
+      ];
+    }
+    return [
+      { name: '200 OK', value: ok, color: '#10b981' },
+      { name: '3xx Redirect', value: redirects, color: '#3b82f6' },
+      { name: '404 Broken', value: notFound, color: '#f43f5e' },
+      { name: '5xx Error', value: serverErrors, color: '#ef4444' },
+      { name: 'Other', value: other, color: '#8b5cf6' }
+    ].filter(d => d.value > 0);
+  }, [sessions, stats.totalLinks]);
+
+  const TAG_PALETTE = ['#3b82f6', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#06b6d4', '#6366f1'];
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 p-6 md:p-8 overflow-y-auto custom-scrollbar">
-      <div className="max-w-5xl mx-auto w-full space-y-6">
+    <div className="flex-1 flex flex-col h-full bg-white dark:bg-zinc-950 p-4 md:p-8 overflow-y-auto custom-scrollbar pb-safe">
+      <div className="max-w-5xl mx-auto w-full space-y-5">
         
         {/* Header with Global Actions */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-4">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl shrink-0">
               <History className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">History & Reports</h1>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">Manage sessions, backup all history, and restore data anytime.</p>
+              <h1 className="text-xl sm:text-2xl font-bold text-zinc-900 dark:text-zinc-100">History & Analytics Hub</h1>
+              <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">Lightweight telemetry, tag insights, and offline-ready session archives.</p>
             </div>
           </div>
           
@@ -413,17 +551,17 @@ export function HistoryDashboard({
             {/* Backup All Button */}
             <button
               onClick={handleBackupAllJSON}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs md:text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-all"
+              className="min-h-[44px] flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-xs transition-all active:scale-[0.98]"
               title="Export all sessions with parameters and results into a single JSON backup file"
             >
               <Database className="w-4 h-4" />
-              Backup All (JSON)
+              Backup All
             </button>
 
             {/* Restore from Backup Button */}
-            <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs md:text-sm font-medium text-zinc-700 dark:text-zinc-200 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg cursor-pointer transition-all border border-zinc-300 dark:border-zinc-700">
+            <label className="min-h-[44px] flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-200 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-xl cursor-pointer transition-all border border-zinc-200 dark:border-zinc-700 active:scale-[0.98]">
               {isRestoring ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Upload className="w-4 h-4 text-zinc-500" />}
-              <span>{isRestoring ? 'Restoring...' : 'Restore Backup'}</span>
+              <span>{isRestoring ? 'Restoring...' : 'Restore'}</span>
               <input 
                 ref={fileInputRef}
                 type="file" 
@@ -436,17 +574,17 @@ export function HistoryDashboard({
 
             <button
               onClick={() => handleExportAll('csv')}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs md:text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50 rounded-lg transition-colors"
+              className="min-h-[44px] flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 rounded-xl transition-all active:scale-[0.98]"
               title="Export all extracted links to CSV"
             >
               <Download className="w-4 h-4" />
-              Links CSV
+              CSV
             </button>
 
             {onRecovery && (
               <button
                 onClick={onRecovery}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs md:text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-400 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg transition-colors"
+                className="min-h-[44px] flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-400 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/50 rounded-xl transition-all active:scale-[0.98]"
                 title="Force sync with Firestore server"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -463,100 +601,392 @@ export function HistoryDashboard({
           </div>
         )}
 
-        {/* Stats Grid with Session Health Indicator */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Total Crawl Sessions</span>
-              <Globe className="w-5 h-5 text-blue-500" />
-            </div>
-            <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalCrawls}</span>
-          </div>
-          <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Total Items Extracted</span>
-              <ListOrdered className="w-5 h-5 text-emerald-500" />
-            </div>
-            <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalLinks}</span>
-          </div>
-          <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Smart AI Crawls</span>
-              <Brain className="w-5 h-5 text-purple-500" />
-            </div>
-            <span className="text-3xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalSmartCrawls}</span>
-          </div>
-
-          {/* Session Health Indicator Card */}
-          <div 
-            onClick={() => setFilterOnlyBroken(!filterOnlyBroken)}
+        {/* Dedicated Sub-Tab Segmented Switcher for Android Viewport */}
+        <div className="flex bg-zinc-100 dark:bg-zinc-900 p-1 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
+          <button
+            onClick={() => setDashboardSubTab('sessions')}
             className={cn(
-              "border rounded-xl p-5 transition-all cursor-pointer relative group",
-              stats.brokenSessionsCount > 0
-                ? "bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60 hover:border-rose-400"
-                : "bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-emerald-400"
+              "flex-1 min-h-[44px] px-3 py-2 text-xs sm:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all",
+              dashboardSubTab === 'sessions'
+                ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-sm"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
             )}
-            title={stats.brokenSessionsCount > 0 ? "Click to filter sessions with 404/500 broken links" : "All crawled sessions are healthy"}
           >
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                Session Health
-              </span>
-              <div className={cn(
-                "p-1.5 rounded-lg",
-                stats.brokenSessionsCount > 0 ? "bg-rose-100 dark:bg-rose-900/40 text-rose-600" : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600"
-              )}>
-                <HeartPulse className="w-4 h-4" />
-              </div>
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className={cn(
-                "text-2xl font-bold",
-                stats.brokenSessionsCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
-              )}>
-                {stats.brokenSessionsCount > 0 ? `${stats.brokenSessionsCount} Issue${stats.brokenSessionsCount !== 1 ? 's' : ''}` : 'Optimal (100%)'}
-              </span>
-              <span className="text-[11px] font-semibold text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200 transition-colors">
-                {filterOnlyBroken ? 'Show All' : 'Filter 404/500'}
-              </span>
-            </div>
-            <p className="text-[11px] text-zinc-400 mt-1 truncate">
-              {stats.brokenSessionsCount > 0 
-                ? `${stats.brokenSessionsCount} session(s) contain 404/500 links`
-                : 'No broken links detected'}
-            </p>
-          </div>
+            <History className="w-4 h-4" />
+            <span>Session Logs ({stats.activeCount})</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardSubTab('analytics')}
+            className={cn(
+              "flex-1 min-h-[44px] px-3 py-2 text-xs sm:text-sm font-semibold rounded-lg flex items-center justify-center gap-2 transition-all",
+              dashboardSubTab === 'analytics'
+                ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+            )}
+          >
+            <BarChart2 className="w-4 h-4" />
+            <span>Insights & Telemetry Hub</span>
+            <span className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold",
+              dashboardSubTab === 'analytics' ? "bg-white/20 text-white" : "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+            )}>
+              Live
+            </span>
+          </button>
         </div>
 
-        {/* Session Health Alert Banner */}
-        {stats.brokenSessionsCount > 0 && (
-          <div className="p-3.5 bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-800 dark:text-rose-300 animate-in fade-in">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 bg-rose-100 dark:bg-rose-900/60 rounded-lg text-rose-600 shrink-0">
-                <AlertTriangle className="w-4 h-4" />
+        {/* SUB-TAB 1: DEDICATED INSIGHTS & ANALYTICS HUB */}
+        {dashboardSubTab === 'analytics' && (
+          <div className="space-y-6 animate-in fade-in duration-200">
+            {/* Quick KPI Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5 flex flex-col justify-between">
+                <span className="text-xs text-zinc-500 font-medium">Total Crawls</span>
+                <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mt-1">{stats.totalCrawls}</span>
               </div>
-              <div>
-                <p className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs">
-                  Session Health Alert: Crawled URLs with 404 or 500 status codes detected!
-                </p>
-                <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
-                  {stats.brokenSessionsCount} session(s) have broken links. Click on any session's Health icon to inspect & clean them up.
-                </p>
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5 flex flex-col justify-between">
+                <span className="text-xs text-zinc-500 font-medium">Links Extracted</span>
+                <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{stats.totalLinks}</span>
+              </div>
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5 flex flex-col justify-between">
+                <span className="text-xs text-zinc-500 font-medium">Active Tags</span>
+                <span className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">{tagDistributionData.length}</span>
+              </div>
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5 flex flex-col justify-between">
+                <span className="text-xs text-zinc-500 font-medium">Health Status</span>
+                <span className={cn(
+                  "text-2xl font-bold mt-1",
+                  stats.brokenSessionsCount > 0 ? "text-rose-600" : "text-emerald-600"
+                )}>
+                  {stats.brokenSessionsCount > 0 ? `${stats.brokenSessionsCount} Issues` : '100% Clean'}
+                </span>
               </div>
             </div>
-            <button
-              onClick={() => setFilterOnlyBroken(!filterOnlyBroken)}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-semibold shrink-0 transition-colors border",
-                filterOnlyBroken
-                  ? "bg-rose-600 text-white border-rose-600"
-                  : "bg-white dark:bg-zinc-900 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100 dark:hover:bg-zinc-800"
+
+            {/* Recharts Card 1: Session Tag Distribution with Tap-to-Filter Support */}
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 sm:p-5 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                  <h3 className="font-bold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                    <Hash className="w-4 h-4 text-blue-500" />
+                    Session Tag Distribution
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Tap any tag bar or chip below to filter the session logs instantly.
+                  </p>
+                </div>
+                {selectedTag && (
+                  <button
+                    onClick={() => setSelectedTag(null)}
+                    className="self-start sm:self-auto min-h-[36px] px-2.5 py-1 text-xs font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 rounded-lg border border-rose-200 dark:border-rose-900/40 flex items-center gap-1 active:scale-95 transition-all"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Clear Filter (#{selectedTag})
+                  </button>
+                )}
+              </div>
+
+              {tagDistributionData.length === 0 ? (
+                <div className="py-8 text-center text-xs text-zinc-500 italic">
+                  No tags detected. Add #tags to session titles to view distribution charts.
+                </div>
+              ) : (
+                <>
+                  <div className="h-56 sm:h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart 
+                        data={tagDistributionData}
+                        margin={{ top: 10, right: 10, left: -20, bottom: 25 }}
+                        onClick={(state: any) => {
+                          if (state && state.activePayload && state.activePayload[0]) {
+                            const raw = state.activePayload[0].payload.rawTag;
+                            setSelectedTag(raw);
+                            setDashboardSubTab('sessions');
+                          }
+                        }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" strokeOpacity={0.4} />
+                        <XAxis 
+                          dataKey="tag" 
+                          tick={{ fontSize: 11, fill: '#71717a' }} 
+                          interval={0}
+                          angle={-20}
+                          textAnchor="end"
+                        />
+                        <YAxis tick={{ fontSize: 11, fill: '#71717a' }} />
+                        <Tooltip 
+                          formatter={(value: any, name: any) => [value, name === 'sessions' ? 'Sessions' : 'Links']}
+                          contentStyle={{ backgroundColor: '#18181b', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '12px' }}
+                        />
+                        <Bar 
+                          dataKey="sessions" 
+                          name="Sessions"
+                          radius={[6, 6, 0, 0]}
+                          cursor="pointer"
+                        >
+                          {tagDistributionData.map((entry, index) => (
+                            <Cell 
+                              key={`cell-${index}`} 
+                              fill={selectedTag === entry.rawTag ? '#2563eb' : TAG_PALETTE[index % TAG_PALETTE.length]} 
+                              opacity={selectedTag && selectedTag !== entry.rawTag ? 0.35 : 1}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Tap-to-Filter Tag Chips */}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+                    <span className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mr-1">Tap to Filter:</span>
+                    {tagDistributionData.map((item, idx) => (
+                      <button
+                        key={item.rawTag}
+                        onClick={() => {
+                          setSelectedTag(selectedTag === item.rawTag ? null : item.rawTag);
+                          setDashboardSubTab('sessions');
+                        }}
+                        className={cn(
+                          "min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-95",
+                          selectedTag === item.rawTag
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300"
+                        )}
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: TAG_PALETTE[idx % TAG_PALETTE.length] }} />
+                        <span>{item.tag}</span>
+                        <span className="text-[10px] opacity-75 font-mono">({item.sessions})</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
-            >
-              {filterOnlyBroken ? 'Clear 404/500 Filter' : 'Filter Broken Sessions'}
-            </button>
+            </div>
+
+            {/* Recharts Card 2: Search & Crawl Telemetry (Crawl Frequency, Top Domains, Status Ratios) */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              
+              {/* Crawl Frequency Over Time (Area Chart) */}
+              <div className="lg:col-span-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 sm:p-5 shadow-xs">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="font-bold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-emerald-500" />
+                      Crawl Frequency & Volume Progression
+                    </h3>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Session creation and discovered link accumulation over time.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="h-56 sm:h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart 
+                      data={crawlFrequencyData}
+                      margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
+                    >
+                      <defs>
+                        <linearGradient id="colorLinks" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" strokeOpacity={0.4} />
+                      <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#71717a' }} />
+                      <YAxis tick={{ fontSize: 11, fill: '#71717a' }} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#18181b', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '12px' }}
+                      />
+                      <Area 
+                        type="monotone" 
+                        dataKey="links" 
+                        name="Links Discovered" 
+                        stroke="#10b981" 
+                        strokeWidth={2}
+                        fillOpacity={1} 
+                        fill="url(#colorLinks)" 
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* HTTP Status Code Ratios (Donut/Pie Chart) */}
+              <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col justify-between">
+                <div>
+                  <h3 className="font-bold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                    <PieChartIcon className="w-4 h-4 text-indigo-500" />
+                    HTTP Status Code Ratios
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Response code health distribution.
+                  </p>
+                </div>
+
+                <div className="h-44 w-full my-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusCodeData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={42}
+                        outerRadius={68}
+                        paddingAngle={3}
+                        dataKey="value"
+                      >
+                        {statusCodeData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        formatter={(val: any, name: any) => [val, name]}
+                        contentStyle={{ backgroundColor: '#18181b', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '12px' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="space-y-1.5 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  {statusCodeData.map((s) => (
+                    <div key={s.name} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                        <span className="text-zinc-600 dark:text-zinc-400 font-medium">{s.name}</span>
+                      </div>
+                      <span className="font-mono font-semibold text-zinc-900 dark:text-zinc-100">{s.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Top Crawled Domains Card */}
+              {topDomainsData.length > 0 && (
+                <div className="lg:col-span-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 sm:p-5 shadow-xs">
+                  <h3 className="font-bold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 flex items-center gap-2 mb-1">
+                    <Globe className="w-4 h-4 text-blue-500" />
+                    Top Crawled Target Domains
+                  </h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+                    Most frequently crawled website hosts and their aggregated output link volumes.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    {topDomainsData.map((item, i) => (
+                      <div key={item.domain} className="p-3 bg-zinc-50 dark:bg-zinc-800/60 rounded-xl border border-zinc-200/80 dark:border-zinc-700/60 flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-5 h-5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-bold text-[10px] flex items-center justify-center shrink-0">
+                            {i + 1}
+                          </span>
+                          <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+                            {item.domain}
+                          </span>
+                        </div>
+                        <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md shrink-0">
+                          {item.links} links
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
           </div>
         )}
+
+        {/* SUB-TAB 2: SESSION ARCHIVES & MANAGEMENT */}
+        {dashboardSubTab === 'sessions' && (
+          <div className="space-y-5 animate-in fade-in duration-200">
+            {/* Stats Grid with Session Health Indicator */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Total Crawls</span>
+                  <Globe className="w-4 h-4 text-blue-500" />
+                </div>
+                <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalCrawls}</span>
+              </div>
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Extracted Links</span>
+                  <ListOrdered className="w-4 h-4 text-emerald-500" />
+                </div>
+                <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalLinks}</span>
+              </div>
+              <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Smart AI Crawls</span>
+                  <Brain className="w-4 h-4 text-purple-500" />
+                </div>
+                <span className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{stats.totalSmartCrawls}</span>
+              </div>
+
+              {/* Session Health Indicator Card */}
+              <div 
+                onClick={() => setFilterOnlyBroken(!filterOnlyBroken)}
+                className={cn(
+                  "border rounded-xl p-3.5 transition-all cursor-pointer relative group",
+                  stats.brokenSessionsCount > 0
+                    ? "bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60 hover:border-rose-400"
+                    : "bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-emerald-400"
+                )}
+                title={stats.brokenSessionsCount > 0 ? "Click to filter sessions with 404/500 broken links" : "All crawled sessions are healthy"}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Session Health</span>
+                  <div className={cn(
+                    "p-1 rounded-md",
+                    stats.brokenSessionsCount > 0 ? "bg-rose-100 dark:bg-rose-900/40 text-rose-600" : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600"
+                  )}>
+                    <HeartPulse className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className={cn(
+                    "text-xl font-bold",
+                    stats.brokenSessionsCount > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+                  )}>
+                    {stats.brokenSessionsCount > 0 ? `${stats.brokenSessionsCount} Issues` : '100%'}
+                  </span>
+                  <span className="text-[10px] font-semibold text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200 transition-colors">
+                    {filterOnlyBroken ? 'Show All' : 'Filter 404'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Session Health Alert Banner */}
+            {stats.brokenSessionsCount > 0 && (
+              <div className="p-3 bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-rose-800 dark:text-rose-300 animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-rose-100 dark:bg-rose-900/60 rounded-lg text-rose-600 shrink-0">
+                    <AlertTriangle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs">
+                      Session Health: {stats.brokenSessionsCount} session(s) contain 404 or 500 links.
+                    </p>
+                    <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
+                      Click any session's Health icon to clean up broken links.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setFilterOnlyBroken(!filterOnlyBroken)}
+                  className={cn(
+                    "min-h-[44px] px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-colors border active:scale-95",
+                    filterOnlyBroken
+                      ? "bg-rose-600 text-white border-rose-600"
+                      : "bg-white dark:bg-zinc-900 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800"
+                  )}
+                >
+                  {filterOnlyBroken ? 'Clear Filter' : 'Filter Broken'}
+                </button>
+              </div>
+            )}
 
         {/* Views: Active vs Archived and Tag Filtering */}
         <div className="space-y-3 pt-2">
@@ -908,8 +1338,11 @@ export function HistoryDashboard({
                         <span className="font-medium text-zinc-500">Depth:</span> {session.settings.maxDepth}
                       </div>
                     )}
-                    <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                      <span className="font-medium text-zinc-500">Items:</span> {session.results?.length || 0}
+                    <div className="text-sm text-zinc-600 dark:text-zinc-400 flex items-center justify-between">
+                      <div>
+                        <span className="font-medium text-zinc-500">Items:</span> {session.results?.length || 0}
+                      </div>
+                      <SessionVolumeTrendline results={session.results} />
                     </div>
                   </div>
 
@@ -1005,6 +1438,8 @@ export function HistoryDashboard({
           )}
         </div>
       </div>
+    )}
+  </div>
 
       {/* Manual & On-Demand AI Tag Editor Modal */}
       {editingTagsSession && (

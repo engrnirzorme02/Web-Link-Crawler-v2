@@ -10,12 +10,13 @@ import URLProcessor from './components/URLProcessor';
 import YouTubeSearch from './components/youtube/YouTubeSearch';
 import YouTubeAnalyzer from './components/youtube/YouTubeAnalyzer';
 import { SchedulerDashboard } from './components/SchedulerDashboard';
+import { HistoryDashboard } from './components/HistoryDashboard';
 import { 
   Globe, FileText, Plus, History, Loader2, Menu, X, LogIn, 
   Sparkles, DownloadCloud, Trash2, Edit2, Search, Settings2, 
   Hash, Youtube, LayoutGrid, Brain, Layers, Info, Link, Merge,
   Pin, Archive, ArchiveRestore, CheckSquare, Square, RefreshCw,
-  PanelLeft, Download, Upload, Clock, CalendarClock
+  PanelLeft, Download, Upload, Clock, CalendarClock, BarChart3
 } from 'lucide-react';
 import { ApiUsageMonitor } from './components/ApiUsageMonitor';
 import { cn, getMillis } from './lib/utils';
@@ -30,7 +31,7 @@ import { GlobalScrollButtons } from './components/GlobalScrollButtons';
 import { formatDistanceToNow } from 'date-fns';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'crawler' | 'extractor' | 'url_processor' | 'bulk' | 'file_merge' | 'ai_chat' | 'smart_crawler' | 'data_extractor' | 'scheduler'>('crawler');
+  const [activeTab, setActiveTab] = useState<'crawler' | 'extractor' | 'url_processor' | 'bulk' | 'file_merge' | 'ai_chat' | 'smart_crawler' | 'data_extractor' | 'scheduler' | 'history'>('crawler');
   const [appMode, setAppMode] = useState<'general' | 'youtube' | 'about'>('general');
   const [ytActiveTab, setYtActiveTab] = useState<'search' | 'analyzer'>('search');
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -1015,8 +1016,20 @@ export default function App() {
             </a>
 
             <button
+              onClick={() => {
+                setAppMode('general');
+                setActiveTab('history');
+                setSidebarOpen(false);
+              }}
+              className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold py-2.5 rounded-xl transition-all text-xs shadow-xs active:scale-[0.98]"
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>Insights & Analytics Hub</span>
+            </button>
+
+            <button
               onClick={() => setInfoModalOpen(true)}
-              className="w-full flex items-center justify-center gap-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium py-2 rounded-xl transition-all text-xs"
+              className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium py-2 rounded-xl transition-all text-xs"
             >
               <Info className="w-3.5 h-3.5" />
               <span>Info & Guide</span>
@@ -1150,6 +1163,13 @@ export default function App() {
                      <Sparkles className="w-4 h-4" />
                     Chat
                   </button>
+                  <button 
+                    onClick={() => setActiveTab('history')}
+                    className={cn("flex-none min-h-[44px] py-2 px-3.5 flex items-center justify-center gap-1.5 rounded-lg text-xs md:text-sm font-semibold transition-all active:scale-95", activeTab === 'history' ? "bg-white dark:bg-zinc-800 text-blue-600 shadow-sm" : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200")}
+                  >
+                    <BarChart3 className="w-4 h-4 text-blue-500" />
+                    Insights & History
+                  </button>
                 </>
               ) : (
                 <>
@@ -1172,6 +1192,7 @@ export default function App() {
              </div>
              )}
             <div className="hidden md:flex flex-1 justify-end items-center gap-2">
+               <ApiUsageMonitor />
                {activeSessionId && activeSession && appMode !== 'about' && (
                  <GlobalExport session={activeSession} />
                )}
@@ -1264,6 +1285,36 @@ export default function App() {
                       session={activeSessionId && activeSession?.type === 'ai_chat' ? activeSession : null}
                       userId={userId}
                       onSessionCreated={setActiveSessionId}
+                    />
+                  </div>
+
+                  <div className={cn("w-full h-full min-h-0", appMode === 'general' && activeTab === 'history' ? "flex flex-col" : "hidden")}>
+                    <HistoryDashboard 
+                      sessions={sessions}
+                      userId={userId}
+                      onReRunSession={(sess) => {
+                        setActiveSessionId(sess.id || null);
+                        if (sess.type === 'smart_crawler') setActiveTab('smart_crawler');
+                        else if (sess.type === 'extractor' || sess.type === 'data_extractor') setActiveTab('extractor');
+                        else if (sess.type === 'url_processor') setActiveTab('url_processor');
+                        else if (sess.type === 'bulk') setActiveTab('bulk');
+                        else if (sess.type === 'ai_chat') setActiveTab('ai_chat');
+                        else setActiveTab('crawler');
+                      }}
+                      onDeleteSession={(id) => {
+                        deleteDoc(doc(db, 'sessions', id)).catch(console.error);
+                      }}
+                      onTogglePinSession={togglePinSession}
+                      onToggleArchiveSession={toggleArchiveSession}
+                      onBulkDeleteSessions={(ids) => {
+                        const promises = ids.map(id => deleteDoc(doc(db, 'sessions', id)));
+                        Promise.all(promises).catch(console.error);
+                      }}
+                      onBulkArchiveSessions={(ids, archive) => {
+                        const promises = ids.map(id => updateDoc(doc(db, 'sessions', id), { isArchived: archive }));
+                        Promise.all(promises).catch(console.error);
+                      }}
+                      onRecovery={handleRecovery}
                     />
                   </div>
 
