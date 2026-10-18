@@ -238,15 +238,15 @@ export function ApiUsageMonitor() {
           if (!isOpen) fetchStatus();
         }}
         className={cn(
-          "flex items-center gap-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-full px-3 py-1.5 shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/50",
-          isOpen && "ring-2 ring-blue-500/50 shadow-md",
-          toastAlert && "ring-2 ring-amber-500 animate-pulse"
+          "flex items-center gap-2 bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] rounded-full px-3 py-1.5 shadow-xs hover:bg-[#F0F2EF] dark:hover:bg-[#262D28] transition-all focus:outline-none focus:ring-1 focus:ring-[#287653]",
+          isOpen && "ring-1 ring-[#287653] shadow-sm",
+          toastAlert && "ring-1 ring-amber-500 animate-pulse"
         )}
         title="Gemini API Key রোটেশন ও ফেইলওভার পর্যবেক্ষণ দেখতে ক্লিক করুন"
       >
-        <div className="flex items-center gap-1.5 border-r border-zinc-200 dark:border-zinc-800 pr-2.5">
-          <Cpu className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-          <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300 max-w-[110px] truncate font-medium">
+        <div className="flex items-center gap-1.5 border-r border-[#DCE2DC] dark:border-[#3A443D] pr-2.5">
+          <Cpu className="w-3.5 h-3.5 text-[#287653] dark:text-[#75B992]" />
+          <span className="text-xs font-mono tabular-nums text-zinc-700 dark:text-zinc-300 max-w-[110px] truncate font-medium">
             {model.split(' ')[0]}
           </span>
         </div>
@@ -264,8 +264,8 @@ export function ApiUsageMonitor() {
             )}></span>
           </span>
           <span className={cn(
-            "text-[11px] font-bold tracking-tight",
-            isHealthy ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+            "text-[11px] font-bold tracking-tight font-mono tabular-nums",
+            isHealthy ? "text-[#287653] dark:text-[#75B992]" : "text-amber-600 dark:text-amber-400"
           )}>
             🟢 {activeKeyLabel}
           </span>
@@ -274,12 +274,12 @@ export function ApiUsageMonitor() {
 
       {/* 3. Detailed Monitor Modal Dropdown */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-92 sm:w-[420px] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 overflow-hidden">
+        <div className="absolute top-full right-0 mt-2 w-92 sm:w-[420px] bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 overflow-hidden">
           {/* Header */}
-          <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/80 dark:bg-zinc-800/40">
+          <div className="p-4 border-b border-[#DCE2DC] dark:border-[#3A443D] flex items-center justify-between bg-[#F0F2EF] dark:bg-[#262D28]">
             <div>
-              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+              <h3 className="text-sm font-bold text-[#202522] dark:text-[#F0F2EF] flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#287653] dark:text-[#75B992]" />
                 API Key Rotation & Fallback Monitor
               </h3>
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
@@ -306,9 +306,9 @@ export function ApiUsageMonitor() {
           
           <div className="p-4 space-y-4 max-h-[80vh] overflow-y-auto custom-scrollbar">
             {/* Active Key Signal Banner */}
-            <div className="p-3 bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-blue-500/10 border border-emerald-500/30 rounded-xl flex items-center justify-between">
+            <div className="p-3 bg-[#F0F2EF] dark:bg-[#262D28] border border-[#DCE2DC] dark:border-[#3A443D] rounded-xl flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                <div className="w-8 h-8 rounded-lg bg-[#287653]/15 flex items-center justify-center text-[#287653] dark:text-[#75B992]">
                   <Zap className="w-4 h-4" />
                 </div>
                 <div>
@@ -316,17 +316,17 @@ export function ApiUsageMonitor() {
                     Current Active Engine
                   </span>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                    <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 font-mono tabular-nums">
                       🟢 {activeKeyLabel}
                     </span>
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold px-1.5 py-0.2 bg-emerald-100 dark:bg-emerald-950/70 rounded">
+                    <span className="text-[10px] text-[#287653] dark:text-[#75B992] font-semibold px-1.5 py-0.2 bg-[#287653]/15 rounded">
                       Live
                     </span>
                   </div>
                 </div>
               </div>
               <div className="text-right">
-                <span className="text-[11px] font-mono text-zinc-700 dark:text-zinc-300 font-semibold block">
+                <span className="text-[11px] font-mono tabular-nums text-zinc-700 dark:text-zinc-300 font-semibold block">
                   {statusData?.gemini?.activeHealthyKeysCount ?? 2} Healthy
                 </span>
                 <span className="text-[10px] text-zinc-400">in Key Pool</span>
@@ -419,15 +419,15 @@ export function ApiUsageMonitor() {
                     <div 
                       key={k.name} 
                       className={cn(
-                        "p-2.5 rounded-lg bg-white dark:bg-zinc-900 border text-[11px] transition-all",
+                        "p-2.5 rounded-xl bg-white dark:bg-[#1F2420] border text-[11px] transition-all",
                         isKeyActive 
-                          ? "border-emerald-500 dark:border-emerald-500/70 ring-1 ring-emerald-500/20 shadow-xs" 
-                          : "border-zinc-200 dark:border-zinc-800"
+                          ? "border-[#287653] dark:border-[#75B992] ring-1 ring-[#287653]/30 shadow-xs" 
+                          : "border-[#DCE2DC] dark:border-[#3A443D]"
                       )}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <span className="font-bold text-zinc-900 dark:text-zinc-100">
+                          <span className="font-bold text-[#202522] dark:text-[#F0F2EF]">
                             {friendlyName}
                           </span>
                           <span className="font-mono text-[10px] text-zinc-400 truncate max-w-[130px]">
@@ -436,8 +436,8 @@ export function ApiUsageMonitor() {
                         </div>
 
                         {isKeyActive ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/70 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#287653] dark:text-[#75B992] bg-[#287653]/15 px-2 py-0.5 rounded-full border border-[#287653]/30">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#287653] dark:bg-[#75B992] animate-pulse" />
                             Active & In Use
                           </span>
                         ) : isHealthyKey ? (
@@ -446,7 +446,7 @@ export function ApiUsageMonitor() {
                             Ready (Standby)
                           </span>
                         ) : isRateLimited ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-800">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded border border-amber-300 dark:border-amber-800 font-mono tabular-nums">
                             <AlertTriangle className="w-2.5 h-2.5" />
                             Cooldown ({k.cooldownRemainingSeconds}s)
                           </span>
@@ -457,7 +457,7 @@ export function ApiUsageMonitor() {
                         )}
                       </div>
 
-                      <div className="mt-1.5 flex items-center justify-between text-[10px] text-zinc-500">
+                      <div className="mt-1.5 flex items-center justify-between text-[10px] text-zinc-500 font-mono tabular-nums">
                         <span>সফল কল: {k.successCalls} | মোট: {k.totalCalls}</span>
                         {k.lastUsedAt && k.lastUsedAt !== 'Never' && (
                           <span>ব্যবহৃত: {new Date(k.lastUsedAt).toLocaleTimeString()}</span>

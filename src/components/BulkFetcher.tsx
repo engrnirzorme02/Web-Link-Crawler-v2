@@ -63,7 +63,9 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
   const isFetchingRef = useRef(false);
   isFetchingRef.current = isFetching;
 
-  // Load session data if available
+  const loadedSessionIdRef = useRef<string | null>(null);
+
+  // Load session data if available with hydration protection
   useEffect(() => {
     if (isFetchingRef.current) {
       return;
@@ -71,6 +73,15 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
     if (session) {
       if (!session.type || session.type === 'bulk') {
         const rawResults = Array.isArray(session.results) ? session.results : [];
+        
+        // If this session is already loaded in-memory, protect complete in-memory crawl results
+        // from being overwritten by a stale or truncated Firestore onSnapshot
+        if (loadedSessionIdRef.current === session.id && resultsRef.current.length > 0) {
+          return;
+        }
+
+        loadedSessionIdRef.current = session.id || null;
+
         const sanitizedResults = rawResults.map((r: any) => {
           if (typeof r === 'string') {
             return { url: r, content: '', category: 'General' };
@@ -87,12 +98,14 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
         resultsRef.current = sanitizedResults;
         logsRef.current = session.logs || [];
       } else {
+        loadedSessionIdRef.current = null;
         setResults([]);
         setLogs([]);
         resultsRef.current = [];
         logsRef.current = [];
       }
     } else {
+      loadedSessionIdRef.current = null;
       setResults([]);
       setLogs([]);
       resultsRef.current = [];
@@ -150,6 +163,7 @@ export default function BulkFetcher({ session, userId, onSessionCreated }: BulkF
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+        loadedSessionIdRef.current = newSessionId;
         onSessionCreated(newSessionId);
         setSaveStatus('saved');
       } else {

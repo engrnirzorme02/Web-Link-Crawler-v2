@@ -49,6 +49,7 @@ export default function App() {
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set());
   const [selectedNotesSession, setSelectedNotesSession] = useState<Session | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mobileExploreMenuOpen, setMobileExploreMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialLoadRef = useRef(false);
 
@@ -665,7 +666,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-[100dvh] bg-zinc-200 dark:bg-zinc-900 font-sans antialiased text-zinc-900 dark:text-zinc-100 overflow-hidden">
+    <div className="flex h-[100dvh] bg-[#F7F8F6] dark:bg-[#171B18] font-sans antialiased text-[#202522] dark:text-[#F0F2EF] overflow-hidden">
       
       {/* Sidebar Overlay for Mobile */}
       {sidebarOpen && (
@@ -677,7 +678,7 @@ export default function App() {
 
       {/* Sidebar */}
       <div className={cn(
-        "fixed md:static inset-y-0 left-0 z-50 bg-white dark:bg-zinc-950 border-r border-zinc-200 dark:border-zinc-800 flex flex-col transition-all duration-300 ease-in-out shadow-2xl md:shadow-none",
+        "fixed md:static inset-y-0 left-0 z-50 bg-white dark:bg-[#1F2420] border-r border-[#DCE2DC] dark:border-[#3A443D] flex flex-col transition-all duration-300 ease-in-out shadow-2xl md:shadow-none",
         sidebarOpen ? "translate-x-0 w-80" : "-translate-x-full md:translate-x-0",
         desktopSidebarOpen ? "md:w-80" : "md:w-0 md:border-r-0 md:overflow-hidden md:p-0"
       )}>
@@ -1040,36 +1041,24 @@ export default function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-y-auto md:overflow-hidden relative custom-scrollbar">
-        <div className="md:hidden flex items-center justify-between p-3.5 bg-white dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-zinc-700 dark:text-zinc-300">
-            <Menu className="w-6 h-6" />
-          </button>
-          <div className="font-medium text-zinc-900 dark:text-zinc-100 flex items-center truncate px-2 gap-1.5">
-            <span className="truncate text-xs font-semibold">{activeSessionId ? activeSession?.title : (appMode === 'youtube' ? 'YouTube Tools' : 'NIRZOR MAGIC CRAWLER')}</span>
-            <a 
-              href="/api/download-blueprint"
-              download="architectural_blueprint.md"
-              className="text-xs bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded-full hover:bg-indigo-200 transition-colors shrink-0 flex items-center gap-0.5 font-medium"
-              title="Download Architectural Blueprint Markdown"
-            >
-              <Download className="w-3 h-3" />
-              <span>Blueprint</span>
-            </a>
-            <a 
-              href="/api/download-plan"
-              download="implementation_plan.md"
-              className="text-xs bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-2 py-1 rounded-full hover:bg-emerald-200 transition-colors shrink-0 flex items-center gap-0.5 font-medium"
-              title="Download Implementation Plan Markdown"
-            >
-              <Download className="w-3 h-3" />
-              <span>Plan</span>
-            </a>
+        <div className="md:hidden flex items-center justify-between p-3 bg-white dark:bg-[#1F2420] border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0 gap-2">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button onClick={() => setSidebarOpen(true)} className="p-1.5 -ml-1 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800">
+              <Menu className="w-5 h-5" />
+            </button>
+            <span className="truncate text-xs font-semibold text-[#202522] dark:text-[#F0F2EF]">
+              {activeSessionId ? activeSession?.title : (appMode === 'youtube' ? 'YouTube Tools' : 'NIRZOR CRAWLER')}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <ApiUsageMonitor />
             <button 
               onClick={() => {
                 setAppMode('about');
                 setActiveSessionId(null);
               }}
-              className="text-xs bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 px-2.5 py-1 rounded-full hover:bg-blue-200 transition-colors shrink-0"
+              className="text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-2.5 py-1 rounded-lg hover:bg-zinc-200 transition-colors shrink-0"
             >
               About
             </button>
@@ -1335,6 +1324,240 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* Mobile Explore Destination Popover Menu */}
+        {mobileExploreMenuOpen && (
+          <div className="md:hidden fixed inset-0 z-50 bg-black/40 flex flex-col justify-end" onClick={() => setMobileExploreMenuOpen(false)}>
+            <div 
+              className="bg-white dark:bg-[#1F2420] border-t border-[#DCE2DC] dark:border-[#3A443D] rounded-t-2xl p-4 shadow-2xl animate-in slide-in-from-bottom-5 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between pb-3 mb-2 border-b border-[#DCE2DC] dark:border-[#3A443D]">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-[#287653] dark:text-[#75B992]" />
+                  <span className="font-semibold text-sm text-[#202522] dark:text-[#F0F2EF]">Explore Tools</span>
+                </div>
+                <button 
+                  onClick={() => setMobileExploreMenuOpen(false)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('extractor');
+                    setAppMode('general');
+                    setMobileExploreMenuOpen(false);
+                  }}
+                  className={cn(
+                    "min-h-[48px] p-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium transition-all text-left",
+                    activeTab === 'extractor' 
+                      ? "border-[#287653] bg-[#287653]/10 text-[#287653] dark:text-[#75B992]" 
+                      : "border-[#DCE2DC] dark:border-[#3A443D] bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <Layers className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <div>
+                    <span className="block font-semibold">Extractor</span>
+                    <span className="text-[10px] text-zinc-400">Deep link analysis</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('data_extractor');
+                    setAppMode('general');
+                    setMobileExploreMenuOpen(false);
+                  }}
+                  className={cn(
+                    "min-h-[48px] p-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium transition-all text-left",
+                    activeTab === 'data_extractor' 
+                      ? "border-[#287653] bg-[#287653]/10 text-[#287653] dark:text-[#75B992]" 
+                      : "border-[#DCE2DC] dark:border-[#3A443D] bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <FileText className="w-4 h-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                  <div>
+                    <span className="block font-semibold">Local Extractor</span>
+                    <span className="text-[10px] text-zinc-400">HTML parser</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('url_processor');
+                    setAppMode('general');
+                    setMobileExploreMenuOpen(false);
+                  }}
+                  className={cn(
+                    "min-h-[48px] p-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium transition-all text-left",
+                    activeTab === 'url_processor' 
+                      ? "border-[#287653] bg-[#287653]/10 text-[#287653] dark:text-[#75B992]" 
+                      : "border-[#DCE2DC] dark:border-[#3A443D] bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <Settings2 className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <span className="block font-semibold">URL Processor</span>
+                    <span className="text-[10px] text-zinc-400">Clean & sanitize</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('bulk');
+                    setAppMode('general');
+                    setMobileExploreMenuOpen(false);
+                  }}
+                  className={cn(
+                    "min-h-[48px] p-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium transition-all text-left",
+                    activeTab === 'bulk' 
+                      ? "border-[#287653] bg-[#287653]/10 text-[#287653] dark:text-[#75B992]" 
+                      : "border-[#DCE2DC] dark:border-[#3A443D] bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <DownloadCloud className="w-4 h-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+                  <div>
+                    <span className="block font-semibold">Bulk Fetch</span>
+                    <span className="text-[10px] text-zinc-400">Multi-page fetch</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('file_merge');
+                    setAppMode('general');
+                    setMobileExploreMenuOpen(false);
+                  }}
+                  className={cn(
+                    "min-h-[48px] p-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium transition-all text-left",
+                    activeTab === 'file_merge' 
+                      ? "border-[#287653] bg-[#287653]/10 text-[#287653] dark:text-[#75B992]" 
+                      : "border-[#DCE2DC] dark:border-[#3A443D] bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <Merge className="w-4 h-4 shrink-0 text-cyan-600 dark:text-cyan-400" />
+                  <div>
+                    <span className="block font-semibold">File Merge</span>
+                    <span className="text-[10px] text-zinc-400">Combine exports</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('scheduler');
+                    setAppMode('general');
+                    setMobileExploreMenuOpen(false);
+                  }}
+                  className={cn(
+                    "min-h-[48px] p-2.5 rounded-xl border flex items-center gap-2 text-xs font-medium transition-all text-left",
+                    activeTab === 'scheduler' 
+                      ? "border-[#287653] bg-[#287653]/10 text-[#287653] dark:text-[#75B992]" 
+                      : "border-[#DCE2DC] dark:border-[#3A443D] bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300"
+                  )}
+                >
+                  <CalendarClock className="w-4 h-4 shrink-0 text-purple-600 dark:text-purple-400" />
+                  <div>
+                    <span className="block font-semibold">Scheduler</span>
+                    <span className="text-[10px] text-zinc-400">Recurring cron</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4-Destination Primary Mobile Bottom Navigation Bar */}
+        <nav 
+          aria-label="Mobile Navigation"
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-[#1F2420]/95 backdrop-blur-md border-t border-[#DCE2DC] dark:border-[#3A443D] px-2 py-1 flex items-center justify-around shadow-[0_-2px_10px_rgba(0,0,0,0.05)] pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+        >
+          {/* Destination 1: Crawl (48x48dp touch target) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (activeTab === 'crawler') {
+                setActiveTab('smart_crawler');
+              } else {
+                setActiveTab('crawler');
+              }
+              setAppMode('general');
+            }}
+            className={cn(
+              "min-h-[48px] min-w-[48px] px-2 py-1 flex-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-all text-[11px] font-medium active:scale-95",
+              (activeTab === 'crawler' || activeTab === 'smart_crawler') && appMode === 'general'
+                ? "text-[#287653] dark:text-[#75B992] font-semibold bg-[#287653]/10"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+            )}
+            title="Crawl Destination"
+          >
+            {activeTab === 'smart_crawler' ? <Brain className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
+            <span>{activeTab === 'smart_crawler' ? 'Smart' : 'Crawl'}</span>
+          </button>
+
+          {/* Destination 2: Explore (48x48dp touch target) */}
+          <button
+            type="button"
+            onClick={() => setMobileExploreMenuOpen(prev => !prev)}
+            className={cn(
+              "min-h-[48px] min-w-[48px] px-2 py-1 flex-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-all text-[11px] font-medium active:scale-95 relative",
+              ['extractor', 'data_extractor', 'url_processor', 'bulk', 'file_merge'].includes(activeTab) && appMode === 'general'
+                ? "text-[#287653] dark:text-[#75B992] font-semibold bg-[#287653]/10"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+            )}
+            title="Explore Tools"
+          >
+            <Layers className="w-5 h-5" />
+            <span>Explore</span>
+          </button>
+
+          {/* Destination 3: Sessions (48x48dp touch target) */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('history');
+              setAppMode('general');
+            }}
+            className={cn(
+              "min-h-[48px] min-w-[48px] px-2 py-1 flex-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-all text-[11px] font-medium active:scale-95",
+              (activeTab === 'history' || activeTab === 'scheduler') && appMode === 'general'
+                ? "text-[#287653] dark:text-[#75B992] font-semibold bg-[#287653]/10"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+            )}
+            title="Sessions & History"
+          >
+            <History className="w-5 h-5" />
+            <span>Sessions</span>
+          </button>
+
+          {/* Destination 4: Intelligence (48x48dp touch target) */}
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ai_chat');
+              setAppMode('general');
+            }}
+            className={cn(
+              "min-h-[48px] min-w-[48px] px-2 py-1 flex-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-all text-[11px] font-medium active:scale-95",
+              activeTab === 'ai_chat' && appMode === 'general'
+                ? "text-[#287653] dark:text-[#75B992] font-semibold bg-[#287653]/10"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+            )}
+            title="Intelligence Assistant"
+          >
+            <Sparkles className="w-5 h-5" />
+            <span>Intelligence</span>
+          </button>
+        </nav>
       </div>
       <GlobalScrollButtons />
       <InfoModal isOpen={infoModalOpen} onClose={() => setInfoModalOpen(false)} sessions={sessions} />

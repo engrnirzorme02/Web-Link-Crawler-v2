@@ -161,69 +161,82 @@ export function extractCleanUrlsFromText(text: string): string[] {
   return Array.from(new Set(found));
 }
 
+function getByteSize(str: string): number {
+  try {
+    if (typeof Blob !== 'undefined') {
+      return new Blob([str]).size;
+    }
+  } catch {}
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(str).length;
+  }
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.byteLength(str, 'utf8');
+  }
+  return str.length;
+}
+
 export function truncateForFirestore(data: any): any {
   if (!data || typeof data !== 'object') return data;
   
   const jsonStr = JSON.stringify(data);
-  const size = new Blob([jsonStr]).size;
+  const size = getByteSize(jsonStr);
   
-  // Firestore hard limit per document is 1,048,576 bytes (1 MiB).
-  // If data is under 920KB, keep 100% of all page text and items without any truncation!
-  if (size < 920000) {
+  // Under 900KB -> keep 100% untouched
+  if (size < 900000) {
     return data;
   }
   
-  // If document exceeds 920KB, create a copy and perform progressive trimming
+  // Clone object
   let truncated = JSON.parse(jsonStr);
 
-  // 1. First trim excess logs (logs consume a massive amount of JSON without value)
-  if (truncated.logs && Array.isArray(truncated.logs)) {
-    if (truncated.logs.length > 50) {
-      truncated.logs = truncated.logs.slice(-50);
-    }
+  // 1. Trim verbose runtime logs first (keep last 30 logs)
+  if (truncated.logs && Array.isArray(truncated.logs) && truncated.logs.length > 30) {
+    truncated.logs = truncated.logs.slice(-30);
   }
+  if (getByteSize(JSON.stringify(truncated)) < 900000) return truncated;
 
-  // Check size after trimming verbose logs
-  if (new Blob([JSON.stringify(truncated)]).size < 920000) {
-    return truncated;
-  }
-
-  // 2. Trim excess AI chat messages
-  if (truncated.messages && Array.isArray(truncated.messages)) {
-    if (truncated.messages.length > 40) {
-      truncated.messages = truncated.messages.slice(-40);
-    }
-  }
-
-  // Check size again
-  if (new Blob([JSON.stringify(truncated)]).size < 920000) {
-    return truncated;
-  }
-
-  // 3. Only if a single page is abnormally huge (e.g. > 300,000 characters = ~300KB),
-  // apply a generous safety cap of 300KB so full documentation and long guides are 100% preserved.
+  // 2. Proportionally trim large content / text / markdown fields in results WITHOUT dropping items
   if (truncated.results && Array.isArray(truncated.results)) {
+    const totalResults = truncated.results.length;
+    // Calculate adaptive per-item content length cap so ALL items fit
+    const adaptiveCap = Math.max(1200, Math.floor(750000 / Math.max(1, totalResults)));
+
     truncated.results = truncated.results.map((r: any) => {
       if (typeof r === 'string') return r;
-      const copy = { ...r };
-      const MAX_FIELD_SAFE_CAP = 300000;
-      if (copy && typeof copy.content === 'string' && copy.content.length > MAX_FIELD_SAFE_CAP) {
-        copy.content = copy.content.substring(0, MAX_FIELD_SAFE_CAP);
+      if (!r || typeof r !== 'object') return r;
+      const item = { ...r };
+      
+      const fieldsToTrim = ['content', 'text', 'markdown', 'html', 'plainText'];
+      for (const field of fieldsToTrim) {
+        if (typeof item[field] === 'string' && item[field].length > adaptiveCap) {
+          item[field] = item[field].substring(0, adaptiveCap) + '\n\n[truncated for storage]';
+          item.isTruncatedForStorage = true;
+        }
       }
-      if (copy && typeof copy.text === 'string' && copy.text.length > MAX_FIELD_SAFE_CAP) {
-        copy.text = copy.text.substring(0, MAX_FIELD_SAFE_CAP);
+      return item;
+    });
+  }
+  if (getByteSize(JSON.stringify(truncated)) < 900000) return truncated;
+
+  // 3. Second pass if still over 900KB: tighter trim on content without dropping any URLs/items
+  if (truncated.results && Array.isArray(truncated.results)) {
+    const tightCap = Math.max(400, Math.floor(500000 / Math.max(1, truncated.results.length)));
+    truncated.results = truncated.results.map((r: any) => {
+      if (typeof r === 'string') return r;
+      if (!r || typeof r !== 'object') return r;
+      const item = { ...r };
+      const fieldsToTrim = ['content', 'text', 'markdown', 'html', 'plainText'];
+      for (const field of fieldsToTrim) {
+        if (typeof item[field] === 'string' && item[field].length > tightCap) {
+          item[field] = item[field].substring(0, tightCap) + '\n\n[truncated for storage]';
+          item.isTruncatedForStorage = true;
+        }
       }
-      return copy;
+      return item;
     });
   }
 
-  // 4. If still exceeding 920KB due to hundreds of results, keep the most recent results
-  if (truncated.results && Array.isArray(truncated.results)) {
-    while (truncated.results.length > 50 && new Blob([JSON.stringify(truncated)]).size >= 920000) {
-      truncated.results = truncated.results.slice(0, Math.floor(truncated.results.length * 0.85));
-    }
-  }
-  
   return truncated;
 }
 

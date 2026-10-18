@@ -157,6 +157,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
   const [batchTargetIndex, setBatchTargetIndex] = useState(0);
   const [batchTotalTargets, setBatchTotalTargets] = useState(0);
   const [crawlDone, setCrawlDone] = useState(false);
+  const [terminalReason, setTerminalReason] = useState<string | null>(null);
 
   useEffect(() => {
     let interval: any = null;
@@ -623,6 +624,8 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
     setBatchTotalTargets(validUrls.length);
     setIsCrawling(true);
     isCrawlingRef.current = true;
+    setCrawlDone(false);
+    setTerminalReason(null);
     
     setStatusMessage(overrides ? 'Starting Deep All-in-One Extract...' : 'Starting crawl...');
     setMobileTab('results');
@@ -844,7 +847,10 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
               totalGlobalLinks++;
               setStats(s => ({ ...s, totalLinks: totalGlobalLinks }));
             } else if (data.type === 'done') {
-              addLog(`[${i+1}/${validUrls.length}] Finished. Pages: ${data.pagesCrawled}, New Links: ${data.total}, Errors: ${data.errors}`);
+              if (data.terminalReason) {
+                setTerminalReason(data.terminalReason);
+              }
+              addLog(`[${i+1}/${validUrls.length}] Finished (${data.terminalReason || 'done'}). Pages: ${data.pagesCrawled}, New Links: ${data.total}, Errors: ${data.errors}`);
               finish();
             } else if (data.type === 'error') {
               setError(`Error on ${targetUrl}: ${data.message}`);
@@ -1540,7 +1546,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
           </div>
           
           {/* Fixed Bottom Action Button */}
-          <div className="p-4 border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-[0_-4px_15px_rgba(0,0,0,0.03)] dark:shadow-none z-10 shrink-0">
+          <div className="p-4 border-t border-[#DCE2DC] dark:border-[#3A443D] bg-white dark:bg-[#1F2420] shadow-[0_-4px_15px_rgba(0,0,0,0.03)] dark:shadow-none z-10 shrink-0">
             {!isCrawling ? (
               <div className="flex flex-col gap-2.5">
                 <button 
@@ -1548,7 +1554,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
                     e.preventDefault();
                     handleStart();
                   }}
-                  className="w-full min-h-[48px] flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3.5 rounded-2xl transition-all shadow-lg hover:shadow-blue-600/25 active:scale-[0.98] text-sm"
+                  className="w-full min-h-[48px] flex items-center justify-center gap-2 bg-[#287653] hover:bg-[#216345] dark:bg-[#287653] dark:hover:bg-[#216345] text-white font-semibold py-3.5 rounded-xl transition-all shadow-sm active:scale-[0.98] text-sm"
                 >
                   <Play className="w-5 h-5 fill-current" />
                   <span>Start Crawl</span>
@@ -1571,7 +1577,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
                     className="flex-1 min-h-[44px] flex items-center justify-center gap-1.5 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium py-2.5 rounded-xl transition-all text-xs active:scale-[0.98]"
                     title="Deep recursive multi-page extraction"
                   >
-                    <Zap className="w-4 h-4 text-purple-500 fill-current" />
+                    <Zap className="w-4 h-4 text-emerald-600 dark:text-emerald-400 fill-current" />
                     <span>Deep Extract</span>
                   </button>
                   {results.length > 0 && (
@@ -1606,57 +1612,72 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
             ) : (
               <button 
                 onClick={handleStop}
-                className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-lg hover:shadow-red-600/25 active:scale-[0.98]"
+                className="w-full min-h-[48px] flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-sm active:scale-[0.98]"
               >
                 <Square className="w-5 h-5 fill-current" />
                 Stop Extraction
               </button>
             )}
 
-            {/* Visual Progress Bar (Left Column) */}
+            {/* Visual Progress Bar (Left Column) - Honest Telemetry */}
             {(isCrawling || crawlDone) && (
-              <div className="mt-3 p-3.5 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/40 rounded-2xl space-y-2.5 shadow-2xs">
+              <div className="mt-3 p-3.5 bg-[#F0F2EF] dark:bg-[#262D28] border border-[#DCE2DC] dark:border-[#3A443D] rounded-xl space-y-2.5 shadow-2xs">
                 <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5 font-semibold text-blue-900 dark:text-blue-200">
+                  <div className="flex items-center gap-1.5 font-semibold text-zinc-900 dark:text-zinc-100">
                     {isCrawling ? (
                       <>
-                        <Loader2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 animate-spin" />
+                        <Loader2 className="w-3.5 h-3.5 text-[#287653] dark:text-[#75B992] animate-spin" />
                         <span>Crawling in progress...</span>
                       </>
                     ) : (
                       <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                         <span>Crawl Completed</span>
                       </>
                     )}
                   </div>
-                  <span className="font-bold text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-[11px]">
-                    {Math.min(100, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100))}%
+                  <span className="font-bold text-zinc-800 dark:text-zinc-200 px-2 py-0.5 rounded bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] text-[11px] font-mono tabular-nums">
+                    {crawlDone ? "100%" : `${Math.min(99, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100))}%`}
                   </span>
                 </div>
 
                 {/* Progress Track */}
-                <div className="h-2.5 w-full bg-blue-100 dark:bg-zinc-800 rounded-full overflow-hidden p-0.5 border border-blue-200/50 dark:border-zinc-700/50">
+                <div className="h-2 w-full bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden p-0.5">
                   <div 
                     className={cn(
-                      "h-full rounded-full transition-all duration-300 bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500",
-                      isCrawling ? "animate-pulse" : ""
+                      "h-full rounded-full transition-all duration-300",
+                      crawlDone 
+                        ? "bg-[#287653] dark:bg-[#75B992]" 
+                        : "bg-[#287653] dark:bg-[#75B992] opacity-80"
                     )}
-                    style={{ width: `${Math.min(100, Math.max(isCrawling ? 4 : 0, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100)))}%` }}
+                    style={{ width: `${crawlDone ? 100 : Math.min(99, Math.round((stats.pagesCrawled / Math.max(1, (batchTotalTargets || 1) * (Number(maxPages) || 50))) * 100))}%` }}
                   />
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] text-zinc-600 dark:text-zinc-400 font-medium">
-                  <span>
-                    {stats.pagesCrawled} / {(batchTotalTargets || 1) * (Number(maxPages) || 50)} pages
+                  <span className="font-mono tabular-nums">
+                    {stats.pagesCrawled} crawled / {(batchTotalTargets || 1) * (Number(maxPages) || 50)} cap · Queue: {stats.queueLength}
                     {batchTotalTargets > 1 && ` (URL ${batchTargetIndex}/${batchTotalTargets})`}
                   </span>
-                  {crawlElapsedSeconds > 0 && (
-                    <span>
-                      {Math.floor(crawlElapsedSeconds / 60)}:{(crawlElapsedSeconds % 60).toString().padStart(2, '0')}s
-                      {stats.pagesCrawled > 0 && ` (${(stats.pagesCrawled / Math.max(1, crawlElapsedSeconds)).toFixed(1)}/s)`}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {terminalReason && (
+                      <span className={cn(
+                        "px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider",
+                        terminalReason === 'queue_exhausted' ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" :
+                        terminalReason === 'max_pages_reached' ? "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300" :
+                        terminalReason === 'stopped' ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300" :
+                        "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                      )}>
+                        {terminalReason.replace(/_/g, ' ')}
+                      </span>
+                    )}
+                    {crawlElapsedSeconds > 0 && (
+                      <span className="font-mono tabular-nums">
+                        {Math.floor(crawlElapsedSeconds / 60)}:{(crawlElapsedSeconds % 60).toString().padStart(2, '0')}s
+                        {stats.pagesCrawled > 0 && ` (${(stats.pagesCrawled / Math.max(1, crawlElapsedSeconds)).toFixed(1)}/s)`}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {stats.currentUrl && isCrawling && (

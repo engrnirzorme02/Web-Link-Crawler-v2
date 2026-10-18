@@ -1,9 +1,43 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import dns from 'dns/promises';
 import TurndownService from 'turndown';
 // @ts-ignore
 import { gfm } from 'turndown-plugin-gfm';
 import puppeteer, { Browser } from 'puppeteer';
+
+function isRestrictedIP(ip: string): boolean {
+  const ipv4 = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ipv4)) {
+    const parts = ipv4.split('.').map(Number);
+    const [a, b] = parts;
+    if (a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0) {
+      return true;
+    }
+    return false;
+  }
+  const lower = ip.toLowerCase();
+  if (lower === '::1' || lower === '::' || lower.startsWith('fe80:') || lower.startsWith('fc') || lower.startsWith('fd')) {
+    return true;
+  }
+  return false;
+}
+
+async function assertSafeUrl(u: string): Promise<void> {
+  const parsed = new URL(u);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported protocol: ${parsed.protocol}`);
+  }
+  if (isRestrictedIP(parsed.hostname)) {
+    throw new Error(`Restricted IP target: ${parsed.hostname}`);
+  }
+  const records = await dns.lookup(parsed.hostname, { all: true });
+  for (const r of records) {
+    if (isRestrictedIP(r.address)) {
+      throw new Error(`Restricted resolved IP: ${r.address} for host ${parsed.hostname}`);
+    }
+  }
+}
 
 // Global shared browser instance with lazy instantiation and graceful error recovery
 let globalBrowser: Browser | null = null;
@@ -279,10 +313,11 @@ export async function resolveAndFetchUrl(
   };
 
   while (hops < maxHops) {
+    await assertSafeUrl(currentUrl);
     const res = await axios(currentUrl, {
       headers: defaultHeaders,
       timeout: options.timeout || 12000,
-      maxRedirects: 5,
+      maxRedirects: 0,
       validateStatus: () => true
     });
 

@@ -12,7 +12,7 @@ import {
   collection, query, where, onSnapshot, addDoc, updateDoc, 
   deleteDoc, doc, serverTimestamp, orderBy 
 } from 'firebase/firestore';
-import { cn, getMillis } from '../lib/utils';
+import { cn, getMillis, truncateForFirestore } from '../lib/utils';
 import { format, formatDistanceToNow, addHours, addDays, addWeeks } from 'date-fns';
 
 interface SchedulerDashboardProps {
@@ -323,6 +323,7 @@ export function SchedulerDashboard({ userId, onOpenCrawler }: SchedulerDashboard
 
     const params = new URLSearchParams({
       url: schedule.url,
+      mode: 'domain',
       maxPages: String(schedule.maxPages || 50),
       maxDepth: String(schedule.maxDepth || 3),
       subdomainOnly: String(schedule.filters?.subdomains ?? true)
@@ -337,16 +338,20 @@ export function SchedulerDashboard({ userId, onOpenCrawler }: SchedulerDashboard
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'page') {
-          pagesCrawled++;
+        if (data.type === 'status') {
+          if (data.stats?.pagesCrawled !== undefined) {
+            pagesCrawled = data.stats.pagesCrawled;
+          }
           setActiveRunningJob(prev => prev ? {
             ...prev,
             pagesCrawled,
-            statusText: `Crawling: ${data.url}`
+            statusText: data.message || `Crawling: ${data.stats?.currentUrl || ''}`
           } : null);
         } else if (data.type === 'link') {
           linksFound++;
-          discoveredUrls.push(data.url);
+          if (data.url && !discoveredUrls.includes(data.url)) {
+            discoveredUrls.push(data.url);
+          }
           setActiveRunningJob(prev => prev ? {
             ...prev,
             linksFound
@@ -355,18 +360,18 @@ export function SchedulerDashboard({ userId, onOpenCrawler }: SchedulerDashboard
           errorsCount++;
         } else if (data.type === 'done') {
           eventSource.close();
-          finishJob(schedule, pagesCrawled, linksFound, errorsCount, startTime, 'completed');
+          finishJob(schedule, pagesCrawled, linksFound, errorsCount, startTime, 'completed', undefined, discoveredUrls);
         }
       } catch (e) {}
     };
 
-    eventSource.onerror = (err) => {
+    eventSource.onerror = () => {
       eventSource.close();
-      finishJob(schedule, pagesCrawled, linksFound, errorsCount + 1, startTime, 'failed', 'Connection lost or network timeout');
+      finishJob(schedule, pagesCrawled, linksFound, errorsCount + 1, startTime, 'failed', 'Connection lost or network timeout', discoveredUrls);
     };
   };
 
-  // Finish Crawl Job: Record log, update schedule, notify user
+  // Finish Crawl Job: Record log, update schedule, save session document, notify user
   const finishJob = async (
     schedule: CrawlSchedule, 
     pagesCrawled: number, 
@@ -374,12 +379,13 @@ export function SchedulerDashboard({ userId, onOpenCrawler }: SchedulerDashboard
     errorsCount: number, 
     startTime: number, 
     status: 'completed' | 'failed',
-    errorMessage?: string
+    errorMessage?: string,
+    discoveredUrls: string[] = []
   ) => {
     const duration = Math.round((Date.now() - startTime) / 1000);
     setActiveRunningJob(null);
 
-    // 1. Log to Firestore
+    // 1. Log to Firestore and save session document
     if (userId) {
       try {
         await addDoc(collection(db, 'crawl_logs'), {
@@ -395,6 +401,21 @@ export function SchedulerDashboard({ userId, onOpenCrawler }: SchedulerDashboard
           errorMessage: errorMessage || null,
           executedAt: serverTimestamp()
         });
+
+        // Explicitly save the discovered URLs as a new document in the sessions collection
+        if (discoveredUrls.length > 0) {
+          const sessionPayload = {
+            userId,
+            type: 'crawler',
+            title: `Scheduled: ${schedule.name}`,
+            url: schedule.url,
+            results: discoveredUrls.map(u => ({ url: u, source: 'scheduler' })),
+            logs: [`Scheduled crawl "${schedule.name}" completed with ${discoveredUrls.length} discovered links.`],
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          };
+          await addDoc(collection(db, 'sessions'), truncateForFirestore(sessionPayload));
+        }
 
         // 2. Advance schedule nextRunAt
         if (schedule.id) {

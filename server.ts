@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import axios from 'axios';
+import type { AxiosRequestConfig, AxiosResponse } from 'axios';
+import dns from 'dns/promises';
 import * as cheerio from 'cheerio';
 import { URL } from 'url';
 import { GoogleGenAI } from '@google/genai';
@@ -89,19 +91,33 @@ export class GeminiKeyRotationManager {
   }
 
   public refreshKeys() {
-    const keyConfigs = [
-      { name: 'GEMINI_API_KEY', val: process.env.GEMINI_API_KEY },
-      { name: 'GEMINI_API_KEY_engrikdev', val: process.env.GEMINI_API_KEY_engrikdev },
-      { name: 'GEMINI_API_KEY_engrikdev2', val: process.env.GEMINI_API_KEY_engrikdev2 },
+    // 1. Primary explicit keys from separate Google Cloud Projects
+    const keyMap = new Map<string, string>();
+    const primaryKeys = [
+      'GEMINI_API_KEY',
+      'GEMINI_API_KEY_engrikdev',
+      'GEMINI_API_KEY_engrikdev2'
     ];
+    for (const name of primaryKeys) {
+      const val = process.env[name];
+      if (val && val.trim().length > 0) {
+        keyMap.set(name, val.trim());
+      }
+    }
 
-    for (const item of keyConfigs) {
-      if (!item.val || item.val.trim().length === 0) continue;
-      const existing = this.keys.find(k => k.name === item.name);
+    // 2. Discover any additional GEMINI_API_KEY_* in environment
+    for (const [k, v] of Object.entries(process.env)) {
+      if (k.startsWith('GEMINI_API_KEY') && v && v.trim().length > 0 && !keyMap.has(k)) {
+        keyMap.set(k, v.trim());
+      }
+    }
+
+    for (const [name, val] of keyMap.entries()) {
+      const existing = this.keys.find(k => k.name === name);
       if (!existing) {
         this.keys.push({
-          name: item.name,
-          key: item.val.trim(),
+          name,
+          key: val,
           status: 'active',
           failCount: 0,
           totalCalls: 0,
@@ -109,7 +125,7 @@ export class GeminiKeyRotationManager {
           cooldownUntil: 0,
         });
       } else {
-        existing.key = item.val.trim();
+        existing.key = val;
       }
     }
 
@@ -118,28 +134,32 @@ export class GeminiKeyRotationManager {
     }
   }
 
-  public getAvailableKeys(): GeminiKeyItem[] {
+  public getAvailableKeys(excludeKeyName?: string): GeminiKeyItem[] {
     const now = Date.now();
-    return this.keys.filter(k => k.status !== 'invalid' && k.cooldownUntil <= now);
+    return this.keys.filter(k => 
+      k.status !== 'invalid' && 
+      k.cooldownUntil <= now &&
+      (!excludeKeyName || k.name !== excludeKeyName)
+    );
   }
 
-  public pickNextKey(): GeminiKeyItem | null {
-    const available = this.getAvailableKeys();
+  public pickNextKey(excludeKeyName?: string): GeminiKeyItem | null {
+    let available = this.getAvailableKeys(excludeKeyName);
     if (available.length === 0) {
-      // If all healthy keys are in cooldown, pick the one whose cooldown expires soonest
-      const candidates = this.keys.filter(k => k.status !== 'invalid');
-      if (candidates.length === 0) return null;
+      // If all healthy keys are excluded or in cooldown, check if other keys in cooldown can be picked
+      const candidates = this.keys.filter(k => k.status !== 'invalid' && (!excludeKeyName || k.name !== excludeKeyName));
+      if (candidates.length === 0) {
+        // Fallback to any non-invalid key if no alternative exists
+        const allNonInvalid = this.keys.filter(k => k.status !== 'invalid');
+        if (allNonInvalid.length === 0) return null;
+        return allNonInvalid.sort((a, b) => a.cooldownUntil - b.cooldownUntil)[0];
+      }
       return candidates.sort((a, b) => a.cooldownUntil - b.cooldownUntil)[0];
     }
 
-    // Hybrid: randomly choose or round-robin to distribute load evenly
-    if (Math.random() > 0.5) {
-      const randIdx = Math.floor(Math.random() * available.length);
-      return available[randIdx];
-    } else {
-      this.roundRobinIndex = (this.roundRobinIndex + 1) % available.length;
-      return available[this.roundRobinIndex];
-    }
+    // Round-robin load distribution across independent GCP project quota buckets
+    this.roundRobinIndex = (this.roundRobinIndex + 1) % available.length;
+    return available[this.roundRobinIndex];
   }
 
   public markKeyFailure(keyItem: GeminiKeyItem, err: any): string {
@@ -151,20 +171,19 @@ export class GeminiKeyRotationManager {
     let reason = 'API Error';
 
     // If key is structurally invalid (400 API_KEY_INVALID)
-    if (status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('not valid'))) {
+    if (status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('not valid') || errMsg.includes('API key not valid'))) {
       keyItem.status = 'invalid';
       reason = 'Invalid API Key (400)';
-      console.error(`[GEMINI_ROTATION] Marking key "${keyItem.name}" as INVALID (Excluded from pool). Auto-switching to next key...`);
+      console.error(`[GEMINI_ROTATION] Marking key "${keyItem.name}" as PERMANENTLY INVALID. Excluded from pool.`);
       return reason;
     }
 
-    // If Rate Limit or Quota Exceeded (429 / RESOURCE_EXHAUSTED)
+    // If Rate Limit or Quota Exceeded (429 / RESOURCE_EXHAUSTED) -> 90 seconds cooldown
     if (status === 429 || errMsg.includes('429') || errMsg.includes('Quota exceeded') || errMsg.includes('RESOURCE_EXHAUSTED')) {
       keyItem.status = 'rate_limited';
-      // 90 seconds cooldown
-      keyItem.cooldownUntil = Date.now() + 90000;
+      keyItem.cooldownUntil = Date.now() + 90000; // 90 seconds cooldown
       reason = 'Quota Limit Reached (429)';
-      console.warn(`[GEMINI_ROTATION] Rate limit/quota exceeded on key "${keyItem.name}". Cooldown 90s. Auto-falling back to next key in pool...`);
+      console.warn(`[GEMINI_ROTATION] ⚠️ Quota limit/429 on "${keyItem.name}". Cooldown 90s. Immediately failing over to next GCP project key...`);
       return reason;
     }
 
@@ -172,7 +191,7 @@ export class GeminiKeyRotationManager {
     if (status === 503 || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
       keyItem.cooldownUntil = Date.now() + 20000; // 20s cooldown
       reason = 'High Demand Spike (503)';
-      console.warn(`[GEMINI_ROTATION] Key "${keyItem.name}" hit 503 high demand spike. Cooldown 20s. Auto-switching...`);
+      console.warn(`[GEMINI_ROTATION] Key "${keyItem.name}" hit 503 high demand spike. Cooldown 20s. Switching model/key...`);
       return reason;
     }
 
@@ -203,22 +222,21 @@ export class GeminiKeyRotationManager {
 
     const maxAttempts = Math.max(3, this.keys.length * 2);
     let lastError: any = null;
-    let previousFailedKey: string | null = null;
-    let previousFailedReason = '';
+    let failedKeyName: string | null = null;
     let fallbackEventResult: FallbackEvent | undefined = undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const keyObj = this.pickNextKey();
+      const keyObj = this.pickNextKey(failedKeyName || undefined);
       if (!keyObj) {
         throw new Error('No available healthy Gemini API keys in pool.');
       }
       keyObj.totalCalls++;
 
-      if (attempt > 0 && previousFailedKey && previousFailedKey !== keyObj.name) {
+      if (attempt > 0 && failedKeyName && failedKeyName !== keyObj.name) {
         fallbackEventResult = this.recordFallbackEvent(
-          previousFailedKey,
+          failedKeyName,
           keyObj.name,
-          previousFailedReason || 'Quota Limit / Rate Limit',
+          'Quota Limit Reached (429) / Failover',
           modelToTry
         );
       }
@@ -251,16 +269,16 @@ export class GeminiKeyRotationManager {
           const status = err?.status || err?.response?.status;
           const msg = err?.message || '';
 
-          // If 503 or 404, try alternative model first before discarding key
-          if (status === 503 || status === 404 || msg.includes('high demand') || msg.includes('not found')) {
-            console.warn(`[GEMINI_ROTATION] Model ${currentModel} failed on "${keyObj.name}" with status ${status}. Trying backup model...`);
+          // If 503 or 404, try backup models ('gemini-3.5-flash-lite' or 'gemini-3.8-flash')
+          if (status === 503 || status === 404 || msg.includes('high demand') || msg.includes('UNAVAILABLE')) {
+            console.warn(`[GEMINI_ROTATION] Model ${currentModel} failed on "${keyObj.name}" with status 503. Switching to backup model in candidate list...`);
             continue;
           }
 
-          // If rate limit or invalid key, mark failure and switch keys immediately!
-          previousFailedKey = keyObj.name;
-          previousFailedReason = this.markKeyFailure(keyObj, err);
-          break; // Switch to next key
+          // If 429 or 400, mark key failure (90s cooldown for 429, invalid for 400) and immediately switch keys!
+          failedKeyName = keyObj.name;
+          this.markKeyFailure(keyObj, err);
+          break; // Switch to next key immediately
         }
       }
     }
@@ -280,22 +298,21 @@ export class GeminiKeyRotationManager {
 
     const maxAttempts = Math.max(3, this.keys.length * 2);
     let lastError: any = null;
-    let previousFailedKey: string | null = null;
-    let previousFailedReason = '';
+    let failedKeyName: string | null = null;
     let fallbackEventResult: FallbackEvent | undefined = undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const keyObj = this.pickNextKey();
+      const keyObj = this.pickNextKey(failedKeyName || undefined);
       if (!keyObj) {
         throw new Error('No available healthy Gemini API keys in pool.');
       }
       keyObj.totalCalls++;
 
-      if (attempt > 0 && previousFailedKey && previousFailedKey !== keyObj.name) {
+      if (attempt > 0 && failedKeyName && failedKeyName !== keyObj.name) {
         fallbackEventResult = this.recordFallbackEvent(
-          previousFailedKey,
+          failedKeyName,
           keyObj.name,
-          previousFailedReason || 'Quota Limit Reached (429)',
+          'Quota Limit Reached (429) / Failover',
           modelToTry
         );
       }
@@ -328,14 +345,16 @@ export class GeminiKeyRotationManager {
           const status = err?.status || err?.response?.status;
           const msg = err?.message || '';
 
-          if (status === 503 || status === 404 || msg.includes('high demand') || msg.includes('not found')) {
-            console.warn(`[GEMINI_STREAM] Model ${currentModel} failed on "${keyObj.name}" (status ${status}). Trying backup model...`);
+          // If 503, try backup model ('gemini-3.5-flash-lite' or 'gemini-3.8-flash')
+          if (status === 503 || status === 404 || msg.includes('high demand') || msg.includes('UNAVAILABLE')) {
+            console.warn(`[GEMINI_STREAM] Model ${currentModel} failed on "${keyObj.name}" (status 503). Switching to backup model...`);
             continue;
           }
 
-          previousFailedKey = keyObj.name;
-          previousFailedReason = this.markKeyFailure(keyObj, err);
-          break; // Switch to next key
+          // If 429 or 400, mark key failure (90s cooldown for 429, invalid for 400) and immediately switch keys!
+          failedKeyName = keyObj.name;
+          this.markKeyFailure(keyObj, err);
+          break; // Switch to next key immediately
         }
       }
     }
@@ -372,7 +391,7 @@ export class GeminiKeyRotationManager {
       })),
       primaryModel: this.preferredModel,
       supportedModels: this.candidateModels,
-      rotationMode: 'Random & Round-Robin Load Distribution with Automatic Quota & 429 Failover',
+      rotationMode: 'Round-Robin Multi-Project Load Distribution with 90s 429 Cooldown & Instant Failover',
       autoFallback: true
     };
   }
@@ -385,40 +404,214 @@ function resolveRedirect(url: string): Promise<string> {
   return Promise.resolve(url);
 }
 
-// Exponential Backoff Axios Wrapper for Server-side Crawling Tasks
-async function axiosWithRetry(url: string, config: any = {}, maxRetries = 2, initialDelayMs = 500): Promise<any> {
-  let attempt = 0;
-  while (true) {
-    try {
-      const startTime = Date.now();
-      const response = await axios(url, config);
-      const duration = Date.now() - startTime;
-      console.log(`[CRAWL_SERVER_LOG] HTTP ${response.status} ${config.method || 'GET'} ${url} (${duration}ms)`);
-      if ([429, 502, 503, 504].includes(response.status) && attempt < maxRetries) {
-        attempt++;
-        const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200, 3000);
-        console.warn(`[CRAWL_SERVER_LOG] Received HTTP ${response.status} from ${url}. Retrying in ${Math.round(delay)}ms (Attempt ${attempt}/${maxRetries})...`);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-      return response;
-    } catch (error: any) {
-      attempt++;
-      const statusCode = error.response?.status || 'NETWORK_ERROR';
-      const isTimeout = error.code === 'ECONNABORTED' || (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'));
-      const isClientError = error.response && error.response.status >= 400 && error.response.status < 500 && error.response.status !== 429;
-      
-      console.error(`[CRAWL_SERVER_LOG] Error fetching ${url} - Status: ${statusCode}, Message: ${error.message} (Attempt ${attempt}/${maxRetries + 1})`);
-      
-      // Do not endlessly retry timeouts, 4xx client errors (404, 403, 401, 400), or when max retries reached
-      if (attempt > maxRetries || isTimeout || isClientError) {
-        throw error;
-      }
-      const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200, 3000);
-      console.warn(`[CRAWL_SERVER_LOG] Retrying ${url} in ${Math.round(delay)}ms...`);
-      await new Promise(r => setTimeout(r, delay));
+// ==============================================================================
+// OUTBOUND FETCH GATEWAY & TRUE SSRF PROTECTION
+// Blocks loopback, private RFC1918 subnets, link-local, and cloud metadata (169.254.169.254).
+// Manually intercepts redirects (maxRedirects: 0) and re-resolves DNS for every hop.
+// ==============================================================================
+
+export function isPrivateOrReservedIP(ip: string): boolean {
+  // Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1 -> 127.0.0.1)
+  const ipv4 = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+
+  // IPv4 Checks
+  if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ipv4)) {
+    const parts = ipv4.split('.').map(Number);
+    const [a, b, c] = parts;
+    if (a === 127) return true; // Loopback 127.0.0.0/8
+    if (a === 10) return true;  // Private 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // Private 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // Private 192.168.0.0/16
+    if (a === 169 && b === 254) return true; // Link-local & Cloud Metadata 169.254.0.0/16 (e.g. 169.254.169.254)
+    if (a === 0) return true;   // Current network / broadcast 0.0.0.0/8
+    if (a === 100 && b >= 64 && b <= 127) return true; // Carrier-grade NAT 100.64.0.0/10
+    if (a === 192 && b === 0 && c === 2) return true;  // TEST-NET-1 192.0.2.0/24
+    if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2 198.51.100.0/24
+    if (a === 203 && b === 0 && c === 113) return true;  // TEST-NET-3 203.0.113.0/24
+    if (a >= 224 && a <= 239) return true; // Multicast 224.0.0.0/4
+    if (a >= 240) return true; // Reserved for future use 240.0.0.0/4 & broadcast
+    return false;
+  }
+
+  // IPv6 Checks
+  const lower = ip.toLowerCase();
+  if (lower === '::1' || lower === '::') return true; // Loopback & unspecified
+  if (lower.startsWith('fe80:') || lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // Link-local fe80::/10
+  if (lower.startsWith('fc00:') || lower.startsWith('fd00:') || lower.startsWith('fc') || lower.startsWith('fd')) return true; // Unique local fc00::/7
+  if (lower.startsWith('::ffff:')) {
+    return isPrivateOrReservedIP(lower.slice(7));
+  }
+
+  return false;
+}
+
+/**
+ * Validates target URL and ensures resolved IPs are strictly public internet targets.
+ */
+export async function validateUrlSafety(targetUrl: string): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    throw new Error(`Malformed URL target: "${targetUrl}"`);
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported protocol: ${parsed.protocol}. Only http: and https: are permitted.`);
+  }
+
+  const hostname = parsed.hostname;
+
+  // Numerical IP check on hostname directly
+  if (isPrivateOrReservedIP(hostname)) {
+    throw new Error(`Security Block (SSRF Protection): Target hostname is a restricted/private IP: ${hostname}`);
+  }
+
+  // Pre-flight DNS resolution to inspect destination IP addresses
+  let records: Array<{ address: string; family: number }> = [];
+  try {
+    records = await dns.lookup(hostname, { all: true });
+  } catch (err: any) {
+    throw new Error(`DNS resolution failed for hostname: ${hostname} (${err.message})`);
+  }
+
+  if (!records || records.length === 0) {
+    throw new Error(`DNS resolution returned no records for hostname: ${hostname}`);
+  }
+
+  for (const record of records) {
+    if (isPrivateOrReservedIP(record.address)) {
+      throw new Error(`Security Block (SSRF Protection): Target ${hostname} resolves to restricted/private address: ${record.address}`);
     }
   }
+
+  return parsed;
+}
+
+/**
+ * Safe Outbound HTTP Gateway
+ * Manual redirect interception to prevent SSRF via 301/302 redirects to metadata or private IP.
+ */
+export async function safeFetch(
+  targetUrl: string, 
+  config: AxiosRequestConfig = {}, 
+  maxHops = 5,
+  maxRetries = 2,
+  initialDelayMs = 500
+): Promise<AxiosResponse> {
+  let currentUrl = targetUrl;
+  let hops = 0;
+
+  while (hops <= maxHops) {
+    // 1. Validate safety of current destination hop via DNS inspection
+    await validateUrlSafety(currentUrl);
+
+    // 2. Execute request with automatic redirect following DISABLED (maxRedirects: 0)
+    let attempt = 0;
+    let response: AxiosResponse | null = null;
+
+    while (true) {
+      try {
+        const startTime = Date.now();
+        response = await axios({
+          ...config,
+          url: currentUrl,
+          maxRedirects: 0,
+          validateStatus: () => true // Allow handling 3xx and 4xx manually
+        });
+        const duration = Date.now() - startTime;
+        console.log(`[SAFE_FETCH] HTTP ${response.status} ${config.method || 'GET'} ${currentUrl} (${duration}ms, Hop ${hops})`);
+
+        if ([429, 502, 503, 504].includes(response.status) && attempt < maxRetries) {
+          attempt++;
+          const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200, 3000);
+          console.warn(`[SAFE_FETCH] Received HTTP ${response.status} from ${currentUrl}. Retrying in ${Math.round(delay)}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        break;
+      } catch (err: any) {
+        attempt++;
+        const isTimeout = err.code === 'ECONNABORTED' || (typeof err.message === 'string' && err.message.toLowerCase().includes('timeout'));
+        const isClientError = err.response && err.response.status >= 400 && err.response.status < 500 && err.response.status !== 429;
+
+        if (attempt > maxRetries || isTimeout || isClientError) {
+          throw err;
+        }
+        const delay = Math.min(initialDelayMs * Math.pow(2, attempt - 1) + Math.random() * 200, 3000);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
+    if (!response) {
+      throw new Error(`Failed to fetch ${currentUrl} after attempts.`);
+    }
+
+    // 3. If redirect response (301, 302, 303, 307, 308), extract Location and re-validate before next hop
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const redirectLocation = response.headers['location'];
+      if (!redirectLocation) {
+        return response; // No location header, return response
+      }
+
+      const nextUrl = new URL(redirectLocation, currentUrl).toString();
+      console.log(`[SAFE_FETCH] Intercepted redirect ${response.status}: ${currentUrl} -> ${nextUrl}. Re-validating DNS safety...`);
+      currentUrl = nextUrl;
+      hops++;
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error(`Security Block: Exceeded maximum allowed redirect hops (${maxHops})`);
+}
+
+// Route axiosWithRetry through safeFetch gateway
+async function axiosWithRetry(url: string, config: any = {}, maxRetries = 2): Promise<any> {
+  return safeFetch(url, config, 5, maxRetries);
+}
+
+// Robust static asset file inspector: inspects only the final path segment
+// and ensures documentation routes (e.g. /docs/next.js, /guides/vue.js) are not skipped
+export function isStaticAssetPath(pathname: string): boolean {
+  if (!pathname || pathname === '/') return false;
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length === 0) return false;
+  const lastSegment = segments[segments.length - 1].toLowerCase();
+
+  if (!lastSegment.includes('.') || lastSegment.endsWith('.')) {
+    return false; // Plain route without extension
+  }
+
+  const ext = lastSegment.split('.').pop() || '';
+
+  const mediaAndStyles = [
+    'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'avif',
+    'css', 'scss', 'less',
+    'woff', 'woff2', 'ttf', 'eot', 'otf',
+    'mp4', 'webm', 'ogg', 'mp3', 'wav',
+    'zip', 'tar', 'gz', 'rar', '7z',
+    'pdf', 'docx', 'xlsx', 'pptx'
+  ];
+  if (mediaAndStyles.includes(ext)) {
+    return true;
+  }
+
+  // Scripts / JSON: Distinguish bundle assets from documentation topic slugs (e.g. /docs/next.js)
+  if (ext === 'js' || ext === 'mjs' || ext === 'json') {
+    const isDocPath = /\/(docs|guide|learn|tutorial|wiki|article|reference|topics)\//i.test(pathname);
+    if (isDocPath) {
+      return false; // Documentation page topic, DO NOT skip!
+    }
+    const isAssetPath = /\/(assets|static|dist|chunks|bundles|vendor|build|public)\//i.test(pathname);
+    if (isAssetPath || /^(bundle|main|vendor|chunk|app|runtime|index-[a-z0-9]+)\./i.test(lastSegment)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function generateContentWithFallback(_aiInstance: any, _params: any): Promise<any> {
@@ -473,6 +666,14 @@ function validateAndScoreUrlWithInstruction(candidateUrl: string, startDomain: s
       return false;
     }
     
+    // Allow docs hub paths (/docs, /guide, /documentation, /api, /manual, /reference, /topics, etc.)
+    // to be traversed by the crawler without requiring leaf keyword matches
+    const isDocHubPath = /^\/(docs|guide|guides|documentation|doc|manual|reference|api|learn|tutorials?|topics?|wiki)\/?$/i.test(parsed.pathname) ||
+                         /^\/(docs|guide|guides|documentation|doc|manual|reference|api|learn|tutorials?|topics?|wiki)\/[^/]+\/?$/i.test(parsed.pathname);
+    if (isDocHubPath) {
+      return true;
+    }
+    
     // Clean instruction tokens with Unicode support (preserves Bengali, Arabic, Latin, etc.)
     const stopWords = new Set([
       // English stop words
@@ -484,13 +685,10 @@ function validateAndScoreUrlWithInstruction(candidateUrl: string, startDomain: s
       'করুন', 'এবং', 'বা', 'এর', 'জন্য', 'থেকে', 'সম্পর্কিত', 'সংক্রান্ত', 'সাইট', 'তথ্য', 'দাও', 'করো'
     ]);
     
-    // Unicode-aware word tokenization: \p{L} matches Unicode letters, \p{M} matches combining vowel marks, \p{N} matches numbers
-    const instructionTokens = (instruction || '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{M}\p{N}\s_\-]/gu, ' ')
-      .split(/\s+/)
-      .map(t => t.trim())
-      .filter(t => t.length >= 2 && !stopWords.has(t));
+    // Multilingual Tokenizer using /[\p{L}\p{N}]+/gu so Bengali and non-Latin instructions are never stripped out
+    const matches = (instruction || '').toLowerCase().match(/[\p{L}\p{N}]+/gu);
+    const rawTokens: string[] = matches ? Array.from(matches) : [];
+    const instructionTokens: string[] = rawTokens.filter((t: string) => t.length >= 2 && !stopWords.has(t));
 
     // Semantic bilingual concept mapping (Bengali/English synonyms)
     const semanticSynonyms: Record<string, string[]> = {
@@ -696,7 +894,7 @@ function extractPageMetadataAndEntities($: cheerio.CheerioAPI, htmlData: string,
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Cloud Run and container health check endpoints
   app.get('/api/health', (req, res) => {
@@ -744,8 +942,8 @@ async function startServer() {
     return res.status(404).send('Architectural blueprint file not found.');
   });
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(express.json({ limit: '5mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
   // API diagnostic request logger
   app.use('/api', (req, res, next) => {
@@ -1047,6 +1245,8 @@ CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
 
       const visited = new Set<string>();
       const toVisit = [{ url: targetUrl, depth: 0 }];
+      const urlToMinDepth = new Map<string, number>();
+      urlToMinDepth.set(targetUrl, 0);
       const foundLinks = new Set<string>();
       let pagesCrawled = 0;
       let errorsCount = 0;
@@ -1208,9 +1408,9 @@ CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
             }
 
             // Decide if we should queue it for visiting
-            const skipExtensions = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'css', 'js', 'woff', 'woff2', 'ttf', 'ico', 'pdf', 'docx', 'zip', 'mp3', 'mp4'];
+            const isAsset = isStaticAssetPath(resolvedUrl.pathname);
             
-            if (mode !== 'single' && !visited.has(normalizedUrl) && (!ext || !skipExtensions.includes(ext)) && currentDepth < maxDepth) {
+            if (mode !== 'single' && !isAsset && currentDepth < maxDepth) {
               let canCrawl = false;
               const isIncludedHost = includeDomainsList.some(d => resolvedHost === d || resolvedHost.endsWith('.' + d));
 
@@ -1233,10 +1433,24 @@ CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
                 canCrawl = false;
               }
               
-              if (canCrawl && !toVisit.some(item => item.url === normalizedUrl)) {
-                toVisit.push({ url: normalizedUrl, depth: currentDepth + 1 });
-                if (verbose) {
-                  sendEvent('status', { log: `[QUEUED] Depth ${currentDepth + 1}: ${normalizedUrl}` });
+              if (canCrawl) {
+                const targetDepth = currentDepth + 1;
+                const existingDepth = urlToMinDepth.get(normalizedUrl);
+                
+                // If never seen or found at a shallower depth, update minimum depth and queue
+                if (existingDepth === undefined || targetDepth < existingDepth) {
+                  urlToMinDepth.set(normalizedUrl, targetDepth);
+                  if (!visited.has(normalizedUrl)) {
+                    const queueItem = toVisit.find(item => item.url === normalizedUrl);
+                    if (queueItem) {
+                      queueItem.depth = targetDepth;
+                    } else {
+                      toVisit.push({ url: normalizedUrl, depth: targetDepth });
+                      if (verbose) {
+                        sendEvent('status', { log: `[QUEUED] Depth ${targetDepth}: ${normalizedUrl}` });
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -1425,13 +1639,24 @@ CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
         }
       }
 
-      if (pagesCrawled >= maxPages) {
-         sendEvent('status', { log: `Crawl stopped: Reached max pages limit (${maxPages}).` });
+      let terminalReason: 'completed' | 'max_pages_reached' | 'queue_exhausted' | 'stopped' = 'completed';
+      if (!isClientConnected) {
+        terminalReason = 'stopped';
+      } else if (pagesCrawled >= maxPages) {
+        terminalReason = 'max_pages_reached';
+        sendEvent('status', { log: `Crawl stopped: Reached max pages limit (${maxPages}).` });
       } else if (toVisit.length === 0 && mode !== 'single') {
-         sendEvent('status', { log: `Crawl finished: Exhausted all links within depth limit (${maxDepth}).` });
+        terminalReason = 'queue_exhausted';
+        sendEvent('status', { log: `Crawl finished: Exhausted all links within depth limit (${maxDepth}).` });
       }
 
-      sendEvent('done', { total: foundLinks.size, pagesCrawled, errors: errorsCount });
+      sendEvent('done', { 
+        terminalReason,
+        total: foundLinks.size, 
+        totalLinks: foundLinks.size, 
+        pagesCrawled, 
+        errors: errorsCount 
+      });
       clearInterval(heartbeat);
       setTimeout(() => res.end(), 250);
       
@@ -1985,26 +2210,24 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
           try {
             let response;
             try {
-              response = await axios.head(u, {
+              response = await safeFetch(u, {
+                method: 'HEAD',
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 },
                 timeout: 5000,
-                maxRedirects: 3,
-                validateStatus: () => true
               });
             } catch (headErr) {
               response = null;
             }
 
             if (!response || response.status === 405) {
-              response = await axios.get(u, {
+              response = await safeFetch(u, {
+                method: 'GET',
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 },
                 timeout: 5000,
-                maxRedirects: 3,
-                validateStatus: () => true
               });
             }
 
@@ -2123,10 +2346,15 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
               uselessReason = 'API Schema/Routes';
           }
         } else if (category === 'HTML') {
-          const $ = cheerio.load(response.data);
-          $('script, style, nav, footer, iframe, noscript').remove();
-          content = $('body').text().replace(/\s+/g, ' ').trim();
-          if (!content) content = $.text().replace(/\s+/g, ' ').trim(); // fallback
+          const rawHtml = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+          try {
+            const extracted = cleanAndExtractStructuredContent(rawHtml, url);
+            content = extracted.markdown || extracted.plainText;
+          } catch {
+            const $ = cheerio.load(rawHtml);
+            $('script, style, nav, footer, iframe, noscript, header, aside, .cookie-banner').remove();
+            content = $('body').text().replace(/\s+/g, ' ').trim();
+          }
         } else {
           // Plain text or XML or others
           content = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);

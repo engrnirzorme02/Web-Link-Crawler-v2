@@ -1,12 +1,26 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-sans: "Geist", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  --color-paper: #F7F8F6;
+  --color-paper-surface: #FFFFFF;
+  --color-paper-raised: #F0F2EF;
+  --color-paper-border: #DCE2DC;
+  
+  --color-night: #171B18;
+  --color-night-surface: #1F2420;
+  --color-night-raised: #262D28;
+  --color-night-border: #3A443D;
+
+  --color-evergreen: #287653;
+  --color-evergreen-hover: #216345;
+  --color-evergreen-light: #75B992;
 }
 
-/* Mobile Safe Area & Android Touch Optimization */
+/* Mobile Safe Area & Touch Optimization */
 :root {
   --sat: env(safe-area-inset-top, 0px);
   --sar: env(safe-area-inset-right, 0px);
