@@ -1291,8 +1291,8 @@ export function HistoryDashboard({
 
                   {/* Tags and On-Demand Tagging Controls */}
                   <div className="flex items-center flex-wrap gap-1.5 mb-3">
-                    {session.tags && session.tags.length > 0 && session.tags.map(tag => (
-                      <span key={tag} className="inline-flex items-center text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">
+                    {session.tags && session.tags.length > 0 && session.tags.map((tag, tIdx) => (
+                      <span key={`${tag}-${tIdx}`} className="inline-flex items-center text-[10px] font-medium bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded">
                         <Hash className="w-2.5 h-2.5 mr-0.5" />
                         {tag}
                       </span>

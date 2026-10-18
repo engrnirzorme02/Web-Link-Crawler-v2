@@ -532,8 +532,8 @@ export function CrawlerSessionManagerModal({
 
                           {s.tags && s.tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mb-2">
-                              {s.tags.map(t => (
-                                <span key={t} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 rounded font-mono">
+                              {s.tags.map((t, tIdx) => (
+                                <span key={`${t}-${tIdx}`} className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 px-1.5 py-0.5 rounded font-mono">
                                   #{t}
                                 </span>
                               ))}

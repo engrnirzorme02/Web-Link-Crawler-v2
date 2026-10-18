@@ -579,8 +579,8 @@ export default function App() {
         {/* Tags */}
         {session.tags && session.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-1.5 pl-8">
-            {session.tags.map(tag => (
-              <span key={tag} className="inline-flex items-center text-[9px] bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 px-1.5 py-0.2 rounded font-medium">
+            {session.tags.map((tag, tagIdx) => (
+              <span key={`${tag}-${tagIdx}`} className="inline-flex items-center text-[9px] bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300 px-1.5 py-0.2 rounded font-medium">
                 <Hash className="w-2 h-2 mr-0.5" />
                 {tag}
               </span>

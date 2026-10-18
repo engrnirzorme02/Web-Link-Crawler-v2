@@ -52,14 +52,23 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
   useEffect(() => {
     const updateVoices = () => {
       const availableVoices = window.speechSynthesis.getVoices();
-      setVoices(availableVoices);
+      const uniqueVoices: SpeechSynthesisVoice[] = [];
+      const seen = new Set<string>();
+      for (const v of availableVoices) {
+        const id = `${v.voiceURI || v.name}___${v.lang}`;
+        if (!seen.has(id)) {
+          seen.add(id);
+          uniqueVoices.push(v);
+        }
+      }
+      setVoices(uniqueVoices);
       
       setSelectedVoiceURI(currentUri => {
         if (currentUri && currentUri.toLowerCase().includes('zephyr')) return currentUri;
-        const zephyr = availableVoices.find(v => v.name.toLowerCase().includes('zephyr'));
+        const zephyr = uniqueVoices.find(v => v.name.toLowerCase().includes('zephyr'));
         if (zephyr) return zephyr.voiceURI;
-        if (currentUri && availableVoices.some(v => v.voiceURI === currentUri)) return currentUri;
-        return availableVoices.length > 0 ? availableVoices[0].voiceURI : '';
+        if (currentUri && uniqueVoices.some(v => v.voiceURI === currentUri)) return currentUri;
+        return uniqueVoices.length > 0 ? uniqueVoices[0].voiceURI : '';
       });
     };
     
@@ -612,8 +621,8 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
                   onChange={(e) => setSelectedVoiceURI(e.target.value)}
                   className="w-full text-sm bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg p-2 text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-purple-500 outline-none"
                 >
-                  {voices.map(voice => (
-                    <option key={voice.voiceURI} value={voice.voiceURI}>
+                  {voices.map((voice, idx) => (
+                    <option key={`voice-${voice.voiceURI || voice.name}-${voice.lang}-${idx}`} value={voice.voiceURI}>
                       {voice.name} ({voice.lang})
                     </option>
                   ))}
