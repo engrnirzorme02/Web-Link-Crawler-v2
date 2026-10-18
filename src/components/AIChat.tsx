@@ -154,6 +154,28 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [expertMode, setExpertMode] = useState(false);
   const [showExportDropdown, setShowExportDropdown] = useState(false);
 
+  // Calculate connected verified crawler URL pool size
+  const crawlerSessions = (allSessions || []).filter(
+    s => s.type === 'crawler' || s.type === 'smart_crawler' || s.type === 'data_extractor' || s.type === 'extractor'
+  );
+  const countSet = new Set<string>();
+  if (session && session.results && ['crawler', 'smart_crawler', 'data_extractor', 'extractor'].includes(session.type || '')) {
+    session.results.forEach((r: any) => {
+      const u = typeof r === 'string' ? r : r?.url;
+      if (u) countSet.add(u);
+    });
+  }
+  crawlerSessions.forEach(cs => {
+    if (Array.isArray(cs.results)) {
+      cs.results.forEach((r: any) => {
+        const u = typeof r === 'string' ? r : r?.url;
+        if (u) countSet.add(u);
+      });
+    }
+  });
+  const verifiedCrawlerUrlCount = countSet.size;
+  const crawlerSessionsCount = crawlerSessions.length;
+
   // Cycling status messages for Deep Research
   const deepResearchStatuses = [
     "Initializing research agents...",
@@ -368,9 +390,48 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
 
     let contextStr = '';
     
+    // 1. Automatically connect Chat with Crawler's extracted URL pool (Ground Truth against Hallucination)
+    const crawlerSessions = (allSessions || []).filter(
+      s => s.type === 'crawler' || s.type === 'smart_crawler' || s.type === 'data_extractor' || s.type === 'extractor'
+    );
+    const verifiedUrlPool: Array<{ url: string; title?: string; sessionTitle: string }> = [];
+    const seenUrls = new Set<string>();
+
+    // Current session check
+    if (session && session.results && (session.type === 'crawler' || session.type === 'smart_crawler' || session.type === 'data_extractor')) {
+      for (const item of session.results) {
+        const u = typeof item === 'string' ? item : (item.url || '');
+        if (u && !seenUrls.has(u)) {
+          seenUrls.add(u);
+          verifiedUrlPool.push({ url: u, title: (item as any)?.title, sessionTitle: session.title || 'Active Session' });
+        }
+      }
+    }
+
+    // Historical crawler sessions
+    for (const cs of crawlerSessions) {
+      if (Array.isArray(cs.results)) {
+        for (const item of cs.results.slice(0, 250)) {
+          const u = typeof item === 'string' ? item : (item.url || '');
+          if (u && !seenUrls.has(u)) {
+            seenUrls.add(u);
+            verifiedUrlPool.push({ url: u, title: (item as any)?.title, sessionTitle: cs.title || cs.type || 'Crawler' });
+          }
+        }
+      }
+    }
+
+    if (verifiedUrlPool.length > 0) {
+      contextStr += `=== VERIFIED CRAWLER URL POOL (VERIFIED GROUND TRUTH) ===\n` +
+        `Total Verified URLs Available: ${verifiedUrlPool.length}\n` +
+        `CRITICAL ANTI-HALLUCINATION INSTRUCTION: If the user asks for links under a seed URL or domain, verify against this list first. DO NOT generate, invent, or guess fictional URLs that are not present in this verified list or live Google Search grounding.\n` +
+        verifiedUrlPool.slice(0, 200).map((vu, idx) => `${idx + 1}. ${vu.url}${vu.title ? ` (${vu.title})` : ''} [From: ${vu.sessionTitle}]`).join('\n') +
+        `\n=======================================================\n\n`;
+    }
+
     // Build context from selected tabs
     if (activeContexts.length > 0 && allSessions.length > 0) {
-      contextStr = 'Additional context from other tabs:\n\n';
+      contextStr += 'Additional context from other tabs:\n\n';
       activeContexts.forEach(type => {
         // Find the most recent session for this type
         const latestSession = allSessions.filter(s => s.type === type).sort((a: any, b: any) => {
@@ -388,7 +449,18 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
            let includedCount = 0;
            
            for (const r of latestSession.results) {
-             const itemStr = (typeof r === 'string' ? r : (r.url || JSON.stringify(r))) + '\n';
+             let itemStr = '';
+             if (typeof r === 'string') {
+               itemStr = `URL: ${r}\n`;
+             } else if (r && typeof r === 'object') {
+               const u = r.url || r.link || '';
+               const title = r.title ? `Title: ${r.title}\n` : '';
+               const content = r.content || r.text || r.markdown || (r.description ? `Description: ${r.description}` : '');
+               itemStr = `[Item]\n${u ? `URL: ${u}\n` : ''}${title}${content ? `Content:\n${typeof content === 'string' ? content.slice(0, 8000) : JSON.stringify(content)}\n` : ''}---\n`;
+             } else {
+               itemStr = `${JSON.stringify(r)}\n`;
+             }
+
              if (currentContextLength + itemStr.length > MAX_CHARS) {
                contextStr += `\n...[TRUNCATED: ${latestSession.results.length - includedCount} items omitted to respect dynamic token window]\n\n`;
                break;
@@ -402,6 +474,27 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
            }
         }
       });
+    }
+
+    // Also include active current session results if not already included in activeContexts
+    if (session && session.results && session.results.length > 0 && !activeContexts.includes(session.type)) {
+      contextStr += `--- Active Current Session (${session.title || session.type}) ---\n`;
+      let currentLen = contextStr.length;
+      for (const r of session.results) {
+        let itemStr = '';
+        if (typeof r === 'string') {
+          itemStr = `URL: ${r}\n`;
+        } else if (r && typeof r === 'object') {
+          const u = r.url || r.link || '';
+          const title = r.title ? `Title: ${r.title}\n` : '';
+          const content = r.content || r.text || r.markdown || (r.description ? `Description: ${r.description}` : '');
+          itemStr = `[Item]\n${u ? `URL: ${u}\n` : ''}${title}${content ? `Content:\n${typeof content === 'string' ? content.slice(0, 8000) : JSON.stringify(content)}\n` : ''}---\n`;
+        }
+        if (currentLen + itemStr.length > 3000000) break;
+        contextStr += itemStr;
+        currentLen += itemStr.length;
+      }
+      contextStr += '\n\n';
     }
 
     try {
@@ -449,7 +542,21 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
                 break;
               }
               if (data.type === 'model_used') {
-                window.dispatchEvent(new CustomEvent('api-usage', { detail: { model: data.model, tokens: data.tokens } }));
+                window.dispatchEvent(new CustomEvent('api-usage', { 
+                  detail: { 
+                    model: data.model, 
+                    tokens: data.tokens,
+                    keyUsed: data.keyUsed,
+                    keyLabel: data.keyLabel,
+                    fallbackEvent: data.fallbackEvent
+                  } 
+                }));
+                continue;
+              }
+              if (data.type === 'key_fallback') {
+                window.dispatchEvent(new CustomEvent('api-key-fallback', { 
+                  detail: { fallbackEvent: data.fallbackEvent } 
+                }));
                 continue;
               }
               if (data.type === 'grounding_mapping') {
@@ -662,6 +769,26 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
       </div>
 
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-white dark:bg-zinc-900 relative">
+        {/* Grounding & URL Pool Connection Ribbon */}
+        <div className="px-4 py-2 border-b border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-800/40 flex items-center justify-between gap-2 shrink-0 text-xs">
+          <div className="flex items-center gap-2 truncate">
+            {verifiedCrawlerUrlCount > 0 ? (
+              <span className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span className="truncate">🔗 Connected to Crawled URL Pool ({verifiedCrawlerUrlCount} verified links across {crawlerSessionsCount || 1} session{crawlerSessionsCount === 1 ? '' : 's'})</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">
+                <Sparkles className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                <span>Live Google Search Grounding Active</span>
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] text-zinc-400 font-mono shrink-0 hidden sm:inline">
+            🛡️ Zero-Hallucination Policy Active
+          </span>
+        </div>
+
         {/* Messages Area */}
         <div 
           className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 custom-scrollbar"

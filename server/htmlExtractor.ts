@@ -10,7 +10,7 @@ let globalBrowser: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
 
 async function getHeadlessBrowser(): Promise<Browser> {
-  if (globalBrowser && globalBrowser.isConnected()) {
+  if (globalBrowser && (globalBrowser as any).connected) {
     return globalBrowser;
   }
   if (browserLaunchPromise) {

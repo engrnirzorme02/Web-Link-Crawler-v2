@@ -9,6 +9,7 @@ import Markdown from 'react-markdown';
 interface CrawlResult {
   url: string;
   source: string;
+  title?: string;
 }
 
 interface LogEntry {
@@ -375,7 +376,7 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
                 if (!cleanedUrl) return;
                 setResults(prev => {
                   if (prev.some(r => r.url === cleanedUrl)) return prev;
-                  return [...prev, { url: cleanedUrl, source: data.source }];
+                  return [...prev, { url: cleanedUrl, source: data.source, title: data.title }];
                 });
                 setStats(prev => ({ ...prev, totalLinks: prev.totalLinks + 1 }));
               } else if (data.type === 'done') {
@@ -745,16 +746,39 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
                       <div className="space-y-2">
                         {results.map((result, idx) => {
                           const displayUrl = typeof result?.url === 'string' ? result.url : String(result?.url || '');
+                          const isContentMatched = result.source === 'content_matched';
+                          const isInstructionValidated = result.source === 'instruction_validated';
+
                           return (
-                            <div key={`smart-res-${idx}-${displayUrl}`} className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors">
-                              <div className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 font-semibold text-xs shrink-0">
-                                {idx + 1}
+                            <div key={`smart-res-${idx}-${displayUrl}`} className="flex flex-col gap-1 p-3 rounded-xl bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800/70 border border-zinc-200 dark:border-zinc-800 shadow-sm transition-colors">
+                              <div className="flex items-center gap-2.5">
+                                <div className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 font-semibold text-xs shrink-0">
+                                  {idx + 1}
+                                </div>
+                                {result.title && (
+                                  <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 truncate flex-1">
+                                    {result.title}
+                                  </span>
+                                )}
+                                {isContentMatched ? (
+                                  <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 shrink-0">
+                                    📄 Content Match
+                                  </span>
+                                ) : isInstructionValidated ? (
+                                  <span className="text-[10px] font-bold text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/60 px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 shrink-0">
+                                    🎯 Instruction Match
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-medium text-zinc-500 bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded-full shrink-0">
+                                    {result.source || 'Verified'}
+                                  </span>
+                                )}
                               </div>
                               <a 
                                 href={displayUrl} 
                                 target="_blank" 
                                 rel="noopener noreferrer" 
-                                className="flex-1 truncate text-sm text-zinc-800 dark:text-zinc-300 font-mono hover:text-blue-600 dark:hover:text-blue-400"
+                                className="ml-7 truncate text-xs text-zinc-600 dark:text-zinc-400 font-mono hover:text-blue-600 dark:hover:text-blue-400"
                               >
                                 {displayUrl}
                               </a>

@@ -33,14 +33,59 @@ export interface GeminiKeyItem {
   lastError?: string;
 }
 
+export interface FallbackEvent {
+  id: string;
+  timestamp: string;
+  fromKey: string;
+  toKey: string;
+  fromKeyLabel: string;
+  toKeyLabel: string;
+  reason: string;
+  model: string;
+}
+
 export class GeminiKeyRotationManager {
   private keys: GeminiKeyItem[] = [];
   public candidateModels = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash'];
   public preferredModel = 'gemini-3.5-flash';
   private roundRobinIndex = 0;
+  private fallbackEvents: FallbackEvent[] = [];
+  public currentActiveKeyName: string | null = null;
 
   constructor() {
     this.refreshKeys();
+  }
+
+  public getKeyFriendlyLabel(name?: string | null): string {
+    if (!name) return 'Key #1';
+    const index = this.keys.findIndex(k => k.name === name);
+    if (index >= 0) {
+      return `Key #${index + 1}`;
+    }
+    if (name.includes('engrikdev2')) return 'Key #3';
+    if (name.includes('engrikdev')) return 'Key #2';
+    return 'Key #1';
+  }
+
+  public recordFallbackEvent(fromKey: string, toKey: string, reason: string, model: string): FallbackEvent {
+    const fromLabel = this.getKeyFriendlyLabel(fromKey);
+    const toLabel = this.getKeyFriendlyLabel(toKey);
+    const event: FallbackEvent = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: new Date().toISOString(),
+      fromKey,
+      toKey,
+      fromKeyLabel: fromLabel,
+      toKeyLabel: toLabel,
+      reason,
+      model,
+    };
+    this.fallbackEvents.unshift(event);
+    if (this.fallbackEvents.length > 25) {
+      this.fallbackEvents.pop();
+    }
+    console.warn(`[GEMINI_ROTATION_EVENT] ⚠️ Automatic fallback: ${fromLabel} (${fromKey}) ➔ ${toLabel} (${toKey}) [Reason: ${reason}]`);
+    return event;
   }
 
   public refreshKeys() {
@@ -66,6 +111,10 @@ export class GeminiKeyRotationManager {
       } else {
         existing.key = item.val.trim();
       }
+    }
+
+    if (!this.currentActiveKeyName && this.keys.length > 0) {
+      this.currentActiveKeyName = this.keys[0].name;
     }
   }
 
@@ -93,19 +142,20 @@ export class GeminiKeyRotationManager {
     }
   }
 
-  public markKeyFailure(keyItem: GeminiKeyItem, err: any) {
+  public markKeyFailure(keyItem: GeminiKeyItem, err: any): string {
     const errMsg = err?.message || String(err);
     const status = err?.status || err?.response?.status;
     keyItem.failCount++;
     keyItem.lastError = errMsg.substring(0, 160);
 
-    console.warn(`[GEMINI_ROTATION] Key "${keyItem.name}" failed (Status: ${status || 'unknown'}). Error: ${keyItem.lastError}`);
+    let reason = 'API Error';
 
     // If key is structurally invalid (400 API_KEY_INVALID)
     if (status === 400 && (errMsg.includes('API_KEY_INVALID') || errMsg.includes('not valid'))) {
       keyItem.status = 'invalid';
+      reason = 'Invalid API Key (400)';
       console.error(`[GEMINI_ROTATION] Marking key "${keyItem.name}" as INVALID (Excluded from pool). Auto-switching to next key...`);
-      return;
+      return reason;
     }
 
     // If Rate Limit or Quota Exceeded (429 / RESOURCE_EXHAUSTED)
@@ -113,19 +163,23 @@ export class GeminiKeyRotationManager {
       keyItem.status = 'rate_limited';
       // 90 seconds cooldown
       keyItem.cooldownUntil = Date.now() + 90000;
+      reason = 'Quota Limit Reached (429)';
       console.warn(`[GEMINI_ROTATION] Rate limit/quota exceeded on key "${keyItem.name}". Cooldown 90s. Auto-falling back to next key in pool...`);
-      return;
+      return reason;
     }
 
     // If High Demand spike / 503
     if (status === 503 || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE')) {
       keyItem.cooldownUntil = Date.now() + 20000; // 20s cooldown
+      reason = 'High Demand Spike (503)';
       console.warn(`[GEMINI_ROTATION] Key "${keyItem.name}" hit 503 high demand spike. Cooldown 20s. Auto-switching...`);
-      return;
+      return reason;
     }
 
     // Other transient error: brief cooldown
     keyItem.cooldownUntil = Date.now() + 10000;
+    reason = `Temporary Error (${status || 'Network'})`;
+    return reason;
   }
 
   public markKeySuccess(keyItem: GeminiKeyItem) {
@@ -134,6 +188,7 @@ export class GeminiKeyRotationManager {
     keyItem.lastUsedAt = new Date().toISOString();
     keyItem.failCount = 0;
     keyItem.cooldownUntil = 0;
+    this.currentActiveKeyName = keyItem.name;
   }
 
   // Unary generation with key and model fallback
@@ -141,13 +196,16 @@ export class GeminiKeyRotationManager {
     contents: any;
     config?: any;
     preferredModel?: string;
-  }): Promise<{ text: string; keyUsed: string; modelUsed: string; rawResponse?: any }> {
+  }): Promise<{ text: string; keyUsed: string; modelUsed: string; rawResponse?: any; fallbackOccurred?: boolean; fallbackEvent?: FallbackEvent }> {
     this.refreshKeys();
     const modelToTry = params.preferredModel || this.preferredModel;
     const models = [modelToTry, ...this.candidateModels.filter(m => m !== modelToTry)];
 
     const maxAttempts = Math.max(3, this.keys.length * 2);
     let lastError: any = null;
+    let previousFailedKey: string | null = null;
+    let previousFailedReason = '';
+    let fallbackEventResult: FallbackEvent | undefined = undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const keyObj = this.pickNextKey();
@@ -156,9 +214,18 @@ export class GeminiKeyRotationManager {
       }
       keyObj.totalCalls++;
 
+      if (attempt > 0 && previousFailedKey && previousFailedKey !== keyObj.name) {
+        fallbackEventResult = this.recordFallbackEvent(
+          previousFailedKey,
+          keyObj.name,
+          previousFailedReason || 'Quota Limit / Rate Limit',
+          modelToTry
+        );
+      }
+
       for (const currentModel of models) {
         try {
-          console.log(`[GEMINI_ROTATION] Invoking ${currentModel} via key "${keyObj.name}" (Attempt ${attempt + 1})...`);
+          console.log(`[GEMINI_ROTATION] Invoking ${currentModel} via key "${keyObj.name}" (${this.getKeyFriendlyLabel(keyObj.name)}) (Attempt ${attempt + 1})...`);
           const ai = new GoogleGenAI({
             apiKey: keyObj.key,
             httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -175,7 +242,9 @@ export class GeminiKeyRotationManager {
             text: response.text || '',
             keyUsed: keyObj.name,
             modelUsed: currentModel,
-            rawResponse: response
+            rawResponse: response,
+            fallbackOccurred: attempt > 0,
+            fallbackEvent: fallbackEventResult
           };
         } catch (err: any) {
           lastError = err;
@@ -189,7 +258,8 @@ export class GeminiKeyRotationManager {
           }
 
           // If rate limit or invalid key, mark failure and switch keys immediately!
-          this.markKeyFailure(keyObj, err);
+          previousFailedKey = keyObj.name;
+          previousFailedReason = this.markKeyFailure(keyObj, err);
           break; // Switch to next key
         }
       }
@@ -203,13 +273,16 @@ export class GeminiKeyRotationManager {
     contents: any;
     config?: any;
     preferredModel?: string;
-  }): Promise<{ stream: any; keyUsed: string; modelUsed: string }> {
+  }): Promise<{ stream: any; keyUsed: string; keyLabel: string; modelUsed: string; fallbackOccurred: boolean; fallbackEvent?: FallbackEvent }> {
     this.refreshKeys();
     const modelToTry = params.preferredModel || this.preferredModel;
     const models = [modelToTry, ...this.candidateModels.filter(m => m !== modelToTry)];
 
     const maxAttempts = Math.max(3, this.keys.length * 2);
     let lastError: any = null;
+    let previousFailedKey: string | null = null;
+    let previousFailedReason = '';
+    let fallbackEventResult: FallbackEvent | undefined = undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const keyObj = this.pickNextKey();
@@ -218,9 +291,18 @@ export class GeminiKeyRotationManager {
       }
       keyObj.totalCalls++;
 
+      if (attempt > 0 && previousFailedKey && previousFailedKey !== keyObj.name) {
+        fallbackEventResult = this.recordFallbackEvent(
+          previousFailedKey,
+          keyObj.name,
+          previousFailedReason || 'Quota Limit Reached (429)',
+          modelToTry
+        );
+      }
+
       for (const currentModel of models) {
         try {
-          console.log(`[GEMINI_STREAM] Starting stream with ${currentModel} via key "${keyObj.name}" (Attempt ${attempt + 1})...`);
+          console.log(`[GEMINI_STREAM] Starting stream with ${currentModel} via key "${keyObj.name}" (${this.getKeyFriendlyLabel(keyObj.name)}) (Attempt ${attempt + 1})...`);
           const ai = new GoogleGenAI({
             apiKey: keyObj.key,
             httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
@@ -233,7 +315,14 @@ export class GeminiKeyRotationManager {
           });
 
           this.markKeySuccess(keyObj);
-          return { stream, keyUsed: keyObj.name, modelUsed: currentModel };
+          return {
+            stream,
+            keyUsed: keyObj.name,
+            keyLabel: this.getKeyFriendlyLabel(keyObj.name),
+            modelUsed: currentModel,
+            fallbackOccurred: attempt > 0,
+            fallbackEvent: fallbackEventResult
+          };
         } catch (err: any) {
           lastError = err;
           const status = err?.status || err?.response?.status;
@@ -244,7 +333,8 @@ export class GeminiKeyRotationManager {
             continue;
           }
 
-          this.markKeyFailure(keyObj, err);
+          previousFailedKey = keyObj.name;
+          previousFailedReason = this.markKeyFailure(keyObj, err);
           break; // Switch to next key
         }
       }
@@ -255,12 +345,23 @@ export class GeminiKeyRotationManager {
 
   public getStatus() {
     const now = Date.now();
+    const activeKeyName = this.currentActiveKeyName || this.keys[0]?.name || 'GEMINI_API_KEY';
+    const activeFriendly = this.getKeyFriendlyLabel(activeKeyName);
+
     return {
       connected: this.keys.some(k => k.status === 'active' || k.status === 'rate_limited'),
       totalKeysConfigured: this.keys.length,
       activeHealthyKeysCount: this.keys.filter(k => k.status === 'active' && k.cooldownUntil <= now).length,
-      keys: this.keys.map(k => ({
+      activeKey: activeKeyName,
+      activeKeyLabel: activeFriendly,
+      activeKeyBadge: `🟢 ${activeFriendly} in use`,
+      recentFallbackEvents: this.fallbackEvents.slice(0, 5),
+      lastFallback: this.fallbackEvents[0] || null,
+      keys: this.keys.map((k, idx) => ({
+        index: idx + 1,
+        friendlyLabel: `Key #${idx + 1}`,
         name: k.name,
+        isActive: k.name === activeKeyName,
         status: k.status === 'rate_limited' && k.cooldownUntil > now ? 'rate_limited' : k.status,
         failCount: k.failCount,
         totalCalls: k.totalCalls,
@@ -361,31 +462,74 @@ function validateAndScoreUrlWithInstruction(candidateUrl: string, startDomain: s
 
   try {
     const parsed = new URL(candidateUrl);
-    const lowerPath = (parsed.pathname + parsed.search).toLowerCase();
+    const rawPath = (parsed.pathname + parsed.search).toLowerCase();
+    let decodedPath = rawPath;
+    try {
+      decodedPath = decodeURIComponent(rawPath);
+    } catch (e) {}
     
     // Ignore static asset extensions & auth/junk paths
-    if (/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|mp3|mp4|zip|gz)$/i.test(parsed.pathname)) {
+    if (/\.(css|js|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|mp3|mp4|zip|gz|tar|rar)$/i.test(parsed.pathname)) {
       return false;
     }
     
-    // Clean instruction tokens
-    const stopWords = new Set(['find', 'all', 'the', 'links', 'link', 'about', 'a', 'an', 'for', 'in', 'on', 'page', 'pages', 'website', 'site', 'get', 'crawl', 'extract', 'show', 'list', 'me', 'with', 'from', 'to', 'of', 'and', 'or', 'only', 'relevant', 'urls', 'url']);
+    // Clean instruction tokens with Unicode support (preserves Bengali, Arabic, Latin, etc.)
+    const stopWords = new Set([
+      // English stop words
+      'find', 'all', 'the', 'links', 'link', 'about', 'a', 'an', 'for', 'in', 'on', 'page', 'pages', 
+      'website', 'site', 'get', 'crawl', 'extract', 'show', 'list', 'me', 'with', 'from', 'to', 'of', 
+      'and', 'or', 'only', 'relevant', 'urls', 'url', 'please', 'give', 'fetch',
+      // Common Bengali stop words
+      'সব', 'সবগুলো', 'সবগুলি', 'লিঙ্ক', 'লিংক', 'লিঙ্কগুলো', 'লিংকগুলো', 'পেজ', 'পৃষ্ঠা', 'খুঁজুন', 'বের', 
+      'করুন', 'এবং', 'বা', 'এর', 'জন্য', 'থেকে', 'সম্পর্কিত', 'সংক্রান্ত', 'সাইট', 'তথ্য', 'দাও', 'করো'
+    ]);
+    
+    // Unicode-aware word tokenization: \p{L} matches Unicode letters, \p{M} matches combining vowel marks, \p{N} matches numbers
     const instructionTokens = (instruction || '')
       .toLowerCase()
-      .replace(/[^a-z0-9\s-_]/g, ' ')
+      .replace(/[^\p{L}\p{M}\p{N}\s_\-]/gu, ' ')
       .split(/\s+/)
-      .filter(t => t.length > 2 && !stopWords.has(t));
+      .map(t => t.trim())
+      .filter(t => t.length >= 2 && !stopWords.has(t));
 
-    // If instruction has specific keywords, check if URL path/slug matches at least one keyword or if path is a primary content path
-    if (instructionTokens.length > 0) {
-      const matchesKeyword = instructionTokens.some(token => lowerPath.includes(token));
+    // Semantic bilingual concept mapping (Bengali/English synonyms)
+    const semanticSynonyms: Record<string, string[]> = {
+      'ডকুমেন্টেশন': ['doc', 'docs', 'documentation', 'guide', 'manual', 'reference', 'api'],
+      'ডকস': ['doc', 'docs', 'documentation', 'guide'],
+      'গাইড': ['guide', 'guides', 'tutorial', 'manual'],
+      'প্রাইভেসি': ['privacy', 'policy', 'terms'],
+      'গোপনীয়তা': ['privacy', 'policy', 'terms'],
+      'শর্তাবলী': ['terms', 'condition', 'policy'],
+      'ব্লগ': ['blog', 'article', 'post', 'news'],
+      'নিবন্ধ': ['blog', 'article', 'post'],
+      'কোর্স': ['course', 'learn', 'tutorial', 'lesson', 'academy'],
+      'টিউটোরিয়াল': ['tutorial', 'guide', 'learn'],
+      'যোগাযোগ': ['contact', 'about', 'support'],
+      'প্রোডাক্ট': ['product', 'item', 'pricing', 'features'],
+      'পণ্য': ['product', 'shop', 'store'],
+      'দোকান': ['shop', 'store', 'cart'],
+      'এপিআই': ['api', 'reference', 'endpoint'],
+      'অথেন্টিকেশন': ['auth', 'login', 'security', 'token']
+    };
+
+    // Expand tokens with semantic synonyms
+    const expandedTokens = new Set<string>(instructionTokens);
+    for (const token of instructionTokens) {
+      if (semanticSynonyms[token]) {
+        semanticSynonyms[token].forEach(syn => expandedTokens.add(syn));
+      }
+    }
+    const allTokens = Array.from(expandedTokens);
+
+    // If instruction has specific keywords, check if URL path/slug or host matches at least one keyword
+    if (allTokens.length > 0) {
+      const matchesKeyword = allTokens.some(token => rawPath.includes(token) || decodedPath.includes(token));
       if (!matchesKeyword) {
         const isRoot = parsed.pathname === '/' || parsed.pathname === '';
         if (!isRoot) {
-          // If the path contains slug separators and tokens don't match, check if any token matches host/subdomain
-          const matchesHost = instructionTokens.some(token => parsed.hostname.toLowerCase().includes(token));
+          const matchesHost = allTokens.some(token => parsed.hostname.toLowerCase().includes(token));
           if (!matchesHost) {
-             return false;
+            return false;
           }
         }
       }
@@ -649,10 +793,20 @@ async function startServer() {
     try {
       const { history, message, context, deepResearch, expertMode } = req.body;
       
-      let systemInstruction = "You are an advanced Web Intelligence and Data Analysis assistant. You provide authentic answers with citations and sources. If the user asks for a list of links, ALWAYS output them in a code block at the very end of your response. While you specialize in analyzing the provided context payload, you are ALSO fully capable of general research, coding, and providing external knowledge. Do not artificially limit your capabilities.";
+      let systemInstruction = `You are an advanced Web Intelligence, Real-Time Crawling, and Data Analysis assistant.
+CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
+1. NEVER invent, fabricate, speculate, or guess URLs, endpoints, or links under any circumstances. Every single URL you output MUST either:
+   (a) Exist verbatim in the provided session context / verified crawled URL pool, or
+   (b) Come directly from verified live Google Search grounding web sources.
+2. If the user asks for links, subpages, or URLs of a specific website or seed URL:
+   - Carefully inspect the "VERIFIED CRAWLER URL POOL" or session context provided to you.
+   - If verified URLs exist in the context, present ONLY those verified URLs.
+   - If the requested URLs or subpages have not been crawled or are NOT present in the session context, DO NOT hallucinate fake URLs (e.g., do NOT invent /about, /features, /pricing, /docs, /api/v1). Explicitly inform the user in their language (Bengali or English) that these specific paths have not been crawled yet in this session, present whatever verified data is available, and advise them to run the Crawler or Smart Crawler on that domain.
+   - NEVER output arbitrary, guessed, or hypothetical links in code blocks unless they are verified in the context or search grounding.
+3. Support both Bengali and English fluently based on the user's communication language. Provide clear, honest citations and factual answers.`;
       
       if (deepResearch) {
-        systemInstruction += "\n\nDEEP RESEARCH MODE: You have access to detailed web knowledge. When asked about 'Antigravity' or 'Google Antigravity', know that this refers to Google's agentic AI framework (often used in AI Studio / Project IDX). Ensure your citations and research are highly specific and helpful. ALWAYS cite sources where relevant.";
+        systemInstruction += "\n\nDEEP RESEARCH MODE: You have access to detailed web knowledge and live Google Search grounding. Ensure your citations and research are highly specific and helpful. ALWAYS cite real web sources where relevant.";
       }
       
       if (expertMode) {
@@ -684,24 +838,56 @@ async function startServer() {
       });
 
       try {
-        const { stream, keyUsed, modelUsed } = await geminiKeyPool.generateContentStreamWithFallback({
+        const { stream, keyUsed, keyLabel, modelUsed, fallbackOccurred, fallbackEvent } = await geminiKeyPool.generateContentStreamWithFallback({
           contents: contentsPayload,
           config: {
-            systemInstruction
+            systemInstruction,
+            tools: [{ googleSearch: {} }] // Live Google Search grounding to prevent URL fabrication
           }
         });
 
         // Notify client of active model and key rotation
         res.write(`data: ${JSON.stringify({ 
           type: 'model_used', 
-          model: `${modelUsed} (${keyUsed})`, 
-          tokens: 0 
+          model: `${modelUsed} (${keyLabel})`, 
+          tokens: 0,
+          keyUsed,
+          keyLabel,
+          fallbackOccurred,
+          fallbackEvent
         })}\n\n`);
+
+        if (fallbackOccurred && fallbackEvent) {
+          res.write(`data: ${JSON.stringify({ 
+            type: 'key_fallback', 
+            fallbackEvent 
+          })}\n\n`);
+        }
 
         for await (const chunk of stream) {
           const chunkText = chunk.text;
           if (chunkText) {
             res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+          }
+
+          // Extract search grounding metadata if present
+          const grounding = chunk.candidates?.[0]?.groundingMetadata;
+          if (grounding?.groundingChunks || grounding?.webSearchQueries) {
+            const mappings: Array<{ index: number; vertexUrl: string; realUrl: string; title?: string }> = [];
+            const chunks = grounding.groundingChunks || [];
+            chunks.forEach((gc: any, idx: number) => {
+              if (gc.web?.uri) {
+                mappings.push({
+                  index: idx,
+                  vertexUrl: `[${idx + 1}]`,
+                  realUrl: gc.web.uri,
+                  title: gc.web.title || gc.web.uri
+                });
+              }
+            });
+            if (mappings.length > 0) {
+              res.write(`data: ${JSON.stringify({ type: 'grounding_mapping', mappings })}\n\n`);
+            }
           }
         }
 
@@ -1370,82 +1556,231 @@ async function startServer() {
           });
 
           const contentType = String(response.headers['content-type'] || '');
-          if (!contentType.includes('text/html')) continue;
+          if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) continue;
 
           let htmlData = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
           const $ = cheerio.load(htmlData);
-          
-          let pageLinks = new Set<string>();
+
+          // 1. Content-Based Inspection (Title, Headings, Meta Description)
+          const pageTitle = ($('title').first().text() || $('meta[property="og:title"]').attr('content') || '').trim();
+          const pageDesc = ($('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || '').trim();
+          const headingsArr: string[] = [];
+          $('h1, h2, h3').each((_, el) => {
+            const hText = $(el).text().trim();
+            if (hText && !headingsArr.includes(hText)) headingsArr.push(hText);
+          });
+          const pageHeadingsText = headingsArr.slice(0, 8).join(' ');
+          const combinedPageContent = `${pageTitle} ${pageHeadingsText} ${pageDesc}`.toLowerCase();
+
+          // Prepare multilingual tokens for content scoring
+          const stopWords = new Set([
+            'find', 'all', 'the', 'links', 'link', 'about', 'a', 'an', 'for', 'in', 'on', 'page', 'pages', 
+            'website', 'site', 'get', 'crawl', 'extract', 'show', 'list', 'me', 'with', 'from', 'to', 'of', 
+            'and', 'or', 'only', 'relevant', 'urls', 'url', 'please', 'give', 'fetch',
+            'সব', 'সবগুলো', 'সবগুলি', 'লিঙ্ক', 'লিংক', 'লিঙ্কগুলো', 'লিংকগুলো', 'পেজ', 'পৃষ্ঠা', 'খুঁজুন', 'বের', 
+            'করুন', 'এবং', 'বা', 'এর', 'জন্য', 'থেকে', 'সম্পর্কিত', 'সংক্রান্ত', 'সাইট', 'তথ্য'
+          ]);
+
+          const rawInstructionTokens = (instruction || '')
+            .toLowerCase()
+            .replace(/[^\p{L}\p{M}\p{N}\s_\-]/gu, ' ')
+            .split(/\s+/)
+            .map(t => t.trim())
+            .filter(t => t.length >= 2 && !stopWords.has(t));
+
+          const semanticSynonyms: Record<string, string[]> = {
+            'ডকুমেন্টেশন': ['doc', 'docs', 'documentation', 'guide', 'manual', 'reference', 'api'],
+            'ডকস': ['doc', 'docs', 'documentation', 'guide'],
+            'গাইড': ['guide', 'guides', 'tutorial', 'manual'],
+            'প্রাইভেসি': ['privacy', 'policy', 'terms'],
+            'গোপনীয়তা': ['privacy', 'policy', 'terms'],
+            'শর্তাবলী': ['terms', 'condition', 'policy'],
+            'ব্লগ': ['blog', 'article', 'post', 'news'],
+            'নিবন্ধ': ['blog', 'article', 'post'],
+            'কোর্স': ['course', 'learn', 'tutorial', 'lesson'],
+            'টিউটোরিয়াল': ['tutorial', 'guide', 'learn'],
+            'যোগাযোগ': ['contact', 'about', 'support'],
+            'প্রোডাক্ট': ['product', 'item', 'pricing', 'features'],
+            'পণ্য': ['product', 'shop', 'store'],
+            'এপিআই': ['api', 'reference', 'endpoint'],
+            'অথেন্টিকেশন': ['auth', 'login', 'security', 'token']
+          };
+
+          const allTokensSet = new Set<string>(rawInstructionTokens);
+          for (const token of rawInstructionTokens) {
+            if (semanticSynonyms[token]) {
+              semanticSynonyms[token].forEach(syn => allTokensSet.add(syn));
+            }
+          }
+          const allInstructionTokens = Array.from(allTokensSet);
+
+          // Test if current page content matches user instruction intent
+          const isContentMatch = allInstructionTokens.length > 0 && allInstructionTokens.some(tok => combinedPageContent.includes(tok));
+          if (isContentMatch && !foundLinks.has(currentUrl)) {
+            foundLinks.add(currentUrl);
+            sendEvent('link', { 
+              url: currentUrl, 
+              source: 'content_matched', 
+              title: pageTitle || 'Content Matched Page' 
+            });
+            sendEvent('status', { 
+              log: `[CONTENT MATCH] ${currentUrl} - "${pageTitle || 'Matched page intent in headings/title'}"` 
+            });
+          }
+
+          // 2. Comprehensive Link Extraction: Anchor tags, <link>, SPA script JSON blobs, and deep regex
+          const rawLinkCandidates = new Map<string, { source: string; anchorText?: string }>();
+
+          // 2a. Anchor tags with anchor text inspection
           $('a').each((_, el) => {
-            let href = $(el).attr('href');
-            if (href && !href.startsWith('javascript:') && !href.startsWith('mailto:')) {
-               try {
-                  href = sanitizeAndDecodeUrl(href);
-                  if (!href) return;
-
-                  const resolvedUrl = new URL(href, currentUrl);
-                  const normalizedUrl = resolvedUrl.toString().split('#')[0];
-                  
-                  let allowed = isUrlDomainAllowed(normalizedUrl, startDomain, includeDomainsList);
-
-                  if (allowed) {
-                    if (includePatternsList.length > 0 && !includePatternsList.some(p => p.test(normalizedUrl))) {
-                      allowed = false;
-                    }
-                    if (excludePatternsList.length > 0 && excludePatternsList.some(p => p.test(normalizedUrl))) {
-                      allowed = false;
-                    }
-                    if (excludeExtensionsList.length > 0) {
-                      const ext = normalizedUrl.split('.').pop()?.toLowerCase() || '';
-                      if (excludeExtensionsList.includes(ext)) {
-                        allowed = false;
-                      }
-                    }
-                  }
-
-                  if (allowed) {
-                     pageLinks.add(normalizedUrl);
-                  }
-               } catch(e) {}
+            const href = $(el).attr('href');
+            const anchorText = $(el).text().trim();
+            if (href && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
+              rawLinkCandidates.set(href, { source: 'anchor', anchorText });
             }
           });
 
-          const uniqueLinks = Array.from(pageLinks).filter(link => !visited.has(link) && !foundLinks.has(link));
-          
-          if (uniqueLinks.length > 0) {
-             sendEvent('status', { log: `Analyzing ${uniqueLinks.length} domain links with AI & instruction cross-reference...` });
-             
-             // Chunk links if there are too many (limit to 150 to save processing time)
-             const linksToAnalyze = uniqueLinks.slice(0, 150);
-             
-              try {
-                // 100% Local deterministic filtering without any external Cloud / Gemini API requests
-                const filteredUrls = linksToAnalyze.filter(l => validateAndScoreUrlWithInstruction(l, startDomain, instruction, includeDomainsList));
-                
-                // Cross-reference validation step: ensure every link is from target domain and valid
-                const validatedUrls = filteredUrls.filter(furl => 
-                  typeof furl === 'string' && 
-                  furl.startsWith('http') && 
-                  isUrlDomainAllowed(furl, startDomain, includeDomainsList)
-                );
+          // 2b. Link tags and data attributes
+          $('link[href], [data-href], [data-url]').each((_, el) => {
+            const href = $(el).attr('href') || $(el).attr('data-href') || $(el).attr('data-url');
+            if (href && !rawLinkCandidates.has(href)) {
+              rawLinkCandidates.set(href, { source: 'link_tag' });
+            }
+          });
 
-                if (Array.isArray(validatedUrls) && validatedUrls.length > 0) {
-                   for (const furl of validatedUrls) {
-                      if (!foundLinks.has(furl)) {
-                         foundLinks.add(furl);
-                         sendEvent('link', { url: furl, source: 'instruction_validated' });
-                         if (currentDepth < maxDepth) {
-                            toVisit.push({ url: furl, depth: currentDepth + 1 });
-                         }
-                      }
-                   }
-                   sendEvent('status', { log: `Validated ${validatedUrls.length} relevant links for target domain.` });
-                } else {
-                   sendEvent('status', { log: `No links passed target domain & instruction relevance check for ${currentUrl}.` });
+          // 2c. Structured JSON-LD (<script type="application/ld+json">)
+          $('script[type="application/ld+json"]').each((_, el) => {
+            try {
+              const jsonText = $(el).html() || '';
+              const parsed = JSON.parse(jsonText);
+              const extractUrlsFromJson = (obj: any) => {
+                if (!obj || typeof obj !== 'object') return;
+                if (typeof obj.url === 'string' && obj.url.startsWith('http')) {
+                  rawLinkCandidates.set(obj.url, { source: 'json_ld' });
                 }
-             } catch(e: any) {
-                sendEvent('status', { log: `URL validation error: ${e.message}` });
-             }
+                if (typeof obj['@id'] === 'string' && obj['@id'].startsWith('http')) {
+                  rawLinkCandidates.set(obj['@id'], { source: 'json_ld' });
+                }
+                if (Array.isArray(obj.itemListElement)) {
+                  obj.itemListElement.forEach((item: any) => {
+                    if (item?.item && typeof item.item === 'string') rawLinkCandidates.set(item.item, { source: 'json_ld' });
+                    else if (item?.url) rawLinkCandidates.set(item.url, { source: 'json_ld' });
+                  });
+                }
+                for (const k of Object.keys(obj)) {
+                  if (typeof obj[k] === 'object') extractUrlsFromJson(obj[k]);
+                }
+              };
+              extractUrlsFromJson(parsed);
+            } catch (e) {}
+          });
+
+          // 2d. Deep Regex Extraction for SPAs & Client-side Frameworks (Next.js __NEXT_DATA__, Vite, Nuxt)
+          let rawTextForRegex = htmlData.replace(/\\\//g, '/');
+          const domainRegex = new RegExp(`https?://${startDomain.replace(/\./g, '\\.')}[^\\s"'<>\`\\[\\]{}|\\\\^]+`, 'gi');
+          const absRegexMatches = rawTextForRegex.match(domainRegex) || [];
+          for (const m of absRegexMatches.slice(0, 200)) {
+            if (!rawLinkCandidates.has(m)) {
+              rawLinkCandidates.set(m, { source: 'spa_deep_regex' });
+            }
+          }
+
+          // Relative paths in scripts and attributes: e.g. "/docs/..." or "/guides/..."
+          const relRegex = /["'](\/[a-zA-Z0-9_\-\.][a-zA-Z0-9_\-\./?=&%#]*)["']/g;
+          let relMatch;
+          let relCount = 0;
+          while ((relMatch = relRegex.exec(rawTextForRegex)) !== null && relCount < 100) {
+            const relHref = relMatch[1];
+            if (relHref && !rawLinkCandidates.has(relHref)) {
+              rawLinkCandidates.set(relHref, { source: 'spa_relative_regex' });
+              relCount++;
+            }
+          }
+
+          // 3. Process and Normalize Extracted Links
+          const matchedNewLinks: string[] = [];
+          const exploratoryNewLinks: string[] = [];
+
+          for (const [rawHref, meta] of rawLinkCandidates.entries()) {
+            try {
+              const sanitized = sanitizeAndDecodeUrl(rawHref);
+              if (!sanitized) continue;
+
+              const resolvedUrl = new URL(sanitized, currentUrl);
+              const normalizedUrl = resolvedUrl.toString().split('#')[0];
+
+              if (visited.has(normalizedUrl) || foundLinks.has(normalizedUrl)) continue;
+
+              let allowed = isUrlDomainAllowed(normalizedUrl, startDomain, includeDomainsList);
+              if (!allowed) continue;
+
+              // Check filters
+              if (includePatternsList.length > 0 && !includePatternsList.some(p => p.test(normalizedUrl))) continue;
+              if (excludePatternsList.length > 0 && excludePatternsList.some(p => p.test(normalizedUrl))) continue;
+              
+              const ext = normalizedUrl.split('.').pop()?.toLowerCase() || '';
+              if (excludeExtensionsList.length > 0 && excludeExtensionsList.includes(ext)) continue;
+
+              // Skip static media/binary files
+              if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'css', 'js', 'ico', 'woff', 'woff2', 'ttf', 'zip', 'gz', 'pdf'].includes(ext)) {
+                continue;
+              }
+
+              // Skip CMS admin / logout paths
+              if (/\/(wp-admin|wp-login\.php|logout|xmlrpc\.php|admin-ajax\.php|\.well-known\/)/i.test(resolvedUrl.pathname)) {
+                continue;
+              }
+
+              // Determine if link matches user instruction (via URL slug, host, or anchor text)
+              const slugMatches = validateAndScoreUrlWithInstruction(normalizedUrl, startDomain, instruction, includeDomainsList);
+              const anchorMatches = Boolean(meta.anchorText && allInstructionTokens.some(tok => meta.anchorText!.toLowerCase().includes(tok)));
+
+              if (slugMatches || anchorMatches) {
+                matchedNewLinks.push(normalizedUrl);
+              } else {
+                // If on same origin/subdomain, qualify as exploratory navigation candidate
+                const isSameOrigin = resolvedUrl.hostname.toLowerCase() === startDomain.toLowerCase();
+                const isContentPath = resolvedUrl.pathname.length > 1 && !resolvedUrl.pathname.includes('/cart');
+                if (isSameOrigin && isContentPath) {
+                  exploratoryNewLinks.push(normalizedUrl);
+                }
+              }
+            } catch (e) {}
+          }
+
+          // 4. Handle Direct Matches: Emit & Queue
+          if (matchedNewLinks.length > 0) {
+            for (const mUrl of matchedNewLinks) {
+              if (!foundLinks.has(mUrl)) {
+                foundLinks.add(mUrl);
+                sendEvent('link', { url: mUrl, source: 'instruction_validated' });
+                if (currentDepth < maxDepth) {
+                  toVisit.push({ url: mUrl, depth: currentDepth + 1 });
+                }
+              }
+            }
+            sendEvent('status', { 
+              log: `[MATCH FOUND] Validated ${matchedNewLinks.length} target instruction links from ${currentUrl}` 
+            });
+          }
+
+          // 5. DO NOT ABORT ON 0 DIRECT MATCHES: Traversal for Documentation & Topic Hubs
+          // If level 1 didn't have keyword in slug, queue exploratory links to traverse deeper documentation paths
+          if (currentDepth < maxDepth && exploratoryNewLinks.length > 0) {
+            // Pick up to 8 same-origin exploratory links to continue deep crawl exploration
+            const toQueue = exploratoryNewLinks
+              .filter(link => !visited.has(link) && !toVisit.some(item => item.url === link))
+              .slice(0, 8);
+
+            for (const expUrl of toQueue) {
+              toVisit.push({ url: expUrl, depth: currentDepth + 1 });
+            }
+
+            if (toQueue.length > 0) {
+              sendEvent('status', { 
+                log: `[DEEP TRAVERSAL] Queued ${toQueue.length} exploratory hub path(s) at Depth ${currentDepth + 1} (Traversing documentation tree...)` 
+              });
+            }
           }
         } catch (error: any) {
           errorsCount++;

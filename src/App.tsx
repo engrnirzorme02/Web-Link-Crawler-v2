@@ -1282,7 +1282,7 @@ export default function App() {
                     <AIChat 
                       allSessions={sessions} 
                       key={`ai-chat-${sessionKey}`}
-                      session={activeSessionId && activeSession?.type === 'ai_chat' ? activeSession : null}
+                      session={activeSessionId && activeSession ? activeSession : null}
                       userId={userId}
                       onSessionCreated={setActiveSessionId}
                     />
