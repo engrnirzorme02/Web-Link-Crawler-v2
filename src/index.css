@@ -33,6 +33,17 @@ html, body, #root {
   max-width: 100vw;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+  -webkit-touch-callout: none;
+  overscroll-behavior-y: contain;
+}
+
+button, a, input, select, textarea {
+  touch-action: manipulation;
+}
+
+button, [role="button"] {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .pb-safe {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Download, Layers, Upload, Brain, Terminal, Trash2, FileText } from 'lucide-react';
+import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Download, Layers, Upload, Brain, Terminal, Trash2, FileText, Sparkles, Settings } from 'lucide-react';
 import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
 import { createEventSourceConnection, fetchWithRetry } from '../lib/api';
 import { Session, db } from '../lib/firebase';
@@ -47,6 +47,7 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
   const [selectedUrls, setSelectedUrls] = useState<Set<string>>(new Set());
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
+  const [mobileTab, setMobileTab] = useState<'config' | 'results'>('config');
 
   const handleLogsScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -264,6 +265,7 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
     validUrls.forEach((vu, idx) => addLog(` - [Seed #${idx + 1}] ${vu}`));
 
     addLog(`AI Smart Crawl started for ${validUrls.length} URL(s).`);
+    setMobileTab('results');
     
     let activeSessionId = currentSessionRef.current?.id;
     let newSessionObj: Session | null = currentSessionRef.current;
@@ -477,10 +479,56 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
 
   return (
     <div className="flex flex-col h-auto md:h-full pb-16 md:pb-0 w-full bg-zinc-50 dark:bg-zinc-950 md:rounded-[24px] lg:rounded-[32px] md:shadow-2xl md:border border-zinc-200/50 dark:border-zinc-800/50 md:overflow-hidden relative">
+
+      {/* Sticky Android View Controller (Prompt & Seeds vs Results & AI Guide) */}
+      <div className="md:hidden sticky top-0 z-20 flex items-center p-1.5 bg-white/95 dark:bg-[#1F2420]/95 backdrop-blur-md border-b border-[#DCE2DC] dark:border-[#3A443D] gap-1 shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('config')}
+          className={cn(
+            "flex-1 min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+            mobileTab === 'config'
+              ? "bg-[#287653] text-white shadow-xs"
+              : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900"
+          )}
+        >
+          <Brain className="w-4 h-4" />
+          <span>Prompt & Seeds</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobileTab('results')}
+          className={cn(
+            "flex-1 min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+            mobileTab === 'results'
+              ? "bg-[#287653] text-white shadow-xs"
+              : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900"
+          )}
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>Results & AI Guide</span>
+          {results.length > 0 && (
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-full text-[10px] font-mono",
+              mobileTab === 'results' ? "bg-white/20 text-white" : "bg-[#287653] text-white"
+            )}>
+              {results.length}
+            </span>
+          )}
+          {isCrawling && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+          )}
+        </button>
+      </div>
+
       <div className="flex flex-col md:flex-row flex-1 md:min-h-0 md:overflow-hidden">
         
         {/* Left Column: Configuration */}
-        <div className="w-full md:w-[380px] flex-none flex-shrink-0 bg-white dark:bg-zinc-900 md:border-r border-zinc-200 dark:border-zinc-800 flex flex-col md:min-h-0">
+        <div className={cn(
+          "w-full md:w-[380px] flex-none flex-shrink-0 bg-white dark:bg-zinc-900 md:border-r border-zinc-200 dark:border-zinc-800 flex flex-col md:min-h-0",
+          mobileTab === 'config' ? 'flex' : 'hidden md:flex'
+        )}>
           <div className="flex-1 md:overflow-y-auto p-5 md:p-6 space-y-6 custom-scrollbar">
             
             {/* Target URL */}
@@ -678,7 +726,10 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
         </div>
 
         {/* Right Column: Output & Monitoring */}
-        <div className="flex-1 flex flex-col bg-zinc-50 dark:bg-zinc-950 overflow-hidden">
+        <div className={cn(
+          "flex-1 flex flex-col bg-zinc-50 dark:bg-zinc-950 overflow-hidden",
+          mobileTab === 'results' ? 'flex' : 'hidden md:flex'
+        )}>
           
           {/* Live Progress Stats */}
           <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 p-4 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 shrink-0">

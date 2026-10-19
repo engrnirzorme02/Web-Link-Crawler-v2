@@ -1041,31 +1041,131 @@ export default function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-y-auto md:overflow-hidden relative custom-scrollbar">
-        <div className="md:hidden flex items-center justify-between p-3 bg-white dark:bg-[#1F2420] border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0 gap-2">
+        {/* Android Optimized Mobile Header */}
+        <header className="md:hidden flex items-center justify-between px-3.5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 bg-white dark:bg-[#1F2420] border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0 gap-2 shadow-2xs z-30">
           <div className="flex items-center gap-2 min-w-0 flex-1">
-            <button onClick={() => setSidebarOpen(true)} className="p-1.5 -ml-1 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800">
+            <button 
+              type="button"
+              onClick={() => setSidebarOpen(true)} 
+              className="p-2 -ml-1 text-zinc-700 dark:text-zinc-300 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 active:scale-95 transition-transform"
+              title="Open Navigation Drawer"
+            >
               <Menu className="w-5 h-5" />
             </button>
-            <span className="truncate text-xs font-semibold text-[#202522] dark:text-[#F0F2EF]">
-              {activeSessionId ? activeSession?.title : (appMode === 'youtube' ? 'YouTube Tools' : 'NIRZOR CRAWLER')}
-            </span>
+            <div className="flex flex-col min-w-0">
+              <span className="truncate text-xs font-bold text-[#202522] dark:text-[#F0F2EF] tracking-tight">
+                {activeSessionId ? activeSession?.title : (appMode === 'youtube' ? 'YouTube Tools' : 'NIRZOR CRAWLER v2')}
+              </span>
+              <span className="text-[10px] text-zinc-400 font-mono">
+                {appMode === 'youtube' ? 'Video Research' : (activeTab === 'smart_crawler' ? 'AI Grounded' : 'Engine Ready')}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Quick General/YouTube Toggle on Mobile */}
+            <button
+              type="button"
+              onClick={() => {
+                setAppMode(prev => prev === 'general' ? 'youtube' : 'general');
+                setActiveSessionId(null);
+              }}
+              className={cn(
+                "min-h-[36px] px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 border transition-all active:scale-95",
+                appMode === 'youtube'
+                  ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-300 dark:border-red-900/60"
+                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700"
+              )}
+              title="Switch between Web & YouTube mode"
+            >
+              {appMode === 'youtube' ? <Youtube className="w-3.5 h-3.5 text-red-500" /> : <Globe className="w-3.5 h-3.5 text-[#287653]" />}
+              <span>{appMode === 'youtube' ? 'YT' : 'Web'}</span>
+            </button>
+
             <ApiUsageMonitor />
+
             <button 
+              type="button"
               onClick={() => {
                 setAppMode('about');
                 setActiveSessionId(null);
               }}
-              className="text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-2.5 py-1 rounded-lg hover:bg-zinc-200 transition-colors shrink-0"
+              className="min-h-[36px] text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-2.5 py-1 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0 active:scale-95"
             >
               About
             </button>
           </div>
-        </div>
+        </header>
 
-        <div className="flex-1 flex flex-col md:p-6 lg:p-8 min-h-0 md:overflow-hidden">
+        {/* Mobile Crawler Sub-mode Switcher (When on Crawl tab) */}
+        {appMode === 'general' && (activeTab === 'crawler' || activeTab === 'smart_crawler') && (
+          <div className="md:hidden px-3 pt-2.5 pb-1 bg-white/70 dark:bg-[#1F2420]/70 backdrop-blur-xs border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0">
+            <div className="grid grid-cols-2 p-1 bg-[#F0F2EF] dark:bg-[#262D28] rounded-xl border border-[#DCE2DC] dark:border-[#3A443D] gap-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab('crawler')}
+                className={cn(
+                  "min-h-[38px] flex items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95",
+                  activeTab === 'crawler'
+                    ? "bg-white dark:bg-[#1F2420] text-[#287653] dark:text-[#75B992] shadow-xs border border-[#DCE2DC] dark:border-[#3A443D]"
+                    : "text-zinc-600 dark:text-zinc-400"
+                )}
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>Standard Crawl</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('smart_crawler')}
+                className={cn(
+                  "min-h-[38px] flex items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95",
+                  activeTab === 'smart_crawler'
+                    ? "bg-white dark:bg-[#1F2420] text-[#287653] dark:text-[#75B992] shadow-xs border border-[#DCE2DC] dark:border-[#3A443D]"
+                    : "text-zinc-600 dark:text-zinc-400"
+                )}
+              >
+                <Brain className="w-3.5 h-3.5" />
+                <span>Smart AI Crawl</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Mobile YouTube Sub-mode Switcher */}
+        {appMode === 'youtube' && (
+          <div className="md:hidden px-3 pt-2.5 pb-1 bg-white/70 dark:bg-[#1F2420]/70 backdrop-blur-xs border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0">
+            <div className="grid grid-cols-2 p-1 bg-[#F0F2EF] dark:bg-[#262D28] rounded-xl border border-[#DCE2DC] dark:border-[#3A443D] gap-1">
+              <button
+                type="button"
+                onClick={() => setYtActiveTab('search')}
+                className={cn(
+                  "min-h-[38px] flex items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95",
+                  ytActiveTab === 'search'
+                    ? "bg-white dark:bg-[#1F2420] text-red-600 dark:text-red-400 shadow-xs border border-[#DCE2DC] dark:border-[#3A443D]"
+                    : "text-zinc-600 dark:text-zinc-400"
+                )}
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Search Videos</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setYtActiveTab('analyzer')}
+                className={cn(
+                  "min-h-[38px] flex items-center justify-center gap-1.5 rounded-lg text-xs font-semibold transition-all active:scale-95",
+                  ytActiveTab === 'analyzer'
+                    ? "bg-white dark:bg-[#1F2420] text-red-600 dark:text-red-400 shadow-xs border border-[#DCE2DC] dark:border-[#3A443D]"
+                    : "text-zinc-600 dark:text-zinc-400"
+                )}
+              >
+                <Youtube className="w-3.5 h-3.5" />
+                <span>Transcript Analyzer</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 flex flex-col p-2 md:p-6 lg:p-8 min-h-0 md:overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6">
           <div className="w-full max-w-4xl mx-auto flex items-center justify-between mb-3 gap-3">
              {/* Desktop Sidebar Toggle button & active session breadcrumb */}
              <div className="hidden md:flex items-center gap-2.5 flex-1 min-w-0">
@@ -1085,8 +1185,9 @@ export default function App() {
                )}
              </div>
 
+             {/* Desktop Tabs Navigation (Hidden on Mobile) */}
              {appMode !== 'about' && (
-               <div className="flex bg-zinc-300/50 dark:bg-zinc-950 p-1 rounded-xl shrink-0 mt-2 md:mt-0 w-full overflow-x-auto md:w-auto custom-scrollbar">
+               <div className="hidden md:flex bg-zinc-300/50 dark:bg-zinc-950 p-1 rounded-xl shrink-0 mt-2 md:mt-0 w-full overflow-x-auto md:w-auto custom-scrollbar">
                 {appMode === 'general' ? (
                 <>
                   <button 

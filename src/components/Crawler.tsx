@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info, FolderOpen, Shield, Mail, Phone, Share2, Network, CalendarClock, Code2, Sparkles, RotateCcw, Minus, Plus } from 'lucide-react';
+import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info, FolderOpen, Shield, Mail, Phone, Share2, Network, CalendarClock, Code2, Sparkles, RotateCcw, Minus, Plus, BarChart3 } from 'lucide-react';
 import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
 import { createEventSourceConnection, fetchWithRetry, logNetworkEvent } from '../lib/api';
 import { Session, db, ParsedPageData } from '../lib/firebase';
@@ -1073,6 +1073,48 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
 
   return (
     <div className="flex flex-col h-auto md:h-full pb-16 md:pb-0 w-full bg-zinc-50 dark:bg-zinc-950 md:rounded-[24px] lg:rounded-[32px] md:shadow-2xl md:border border-zinc-200/50 dark:border-zinc-800/50 md:overflow-hidden relative">
+
+      {/* Sticky Android View Controller (Settings & Targets vs Live Results & Logs) */}
+      <div className="md:hidden sticky top-0 z-20 flex items-center p-1.5 bg-white/95 dark:bg-[#1F2420]/95 backdrop-blur-md border-b border-[#DCE2DC] dark:border-[#3A443D] gap-1 shrink-0">
+        <button
+          type="button"
+          onClick={() => setMobileTab('config')}
+          className={cn(
+            "flex-1 min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+            mobileTab === 'config'
+              ? "bg-[#287653] text-white shadow-xs"
+              : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+          )}
+        >
+          <Settings className="w-4 h-4" />
+          <span>Config & Targets</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobileTab('results')}
+          className={cn(
+            "flex-1 min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl text-xs font-semibold transition-all active:scale-[0.98]",
+            mobileTab === 'results'
+              ? "bg-[#287653] text-white shadow-xs"
+              : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"
+          )}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Results & Logs</span>
+          {results.length > 0 && (
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-full text-[10px] font-mono",
+              mobileTab === 'results' ? "bg-white/20 text-white" : "bg-[#287653] text-white"
+            )}>
+              {results.length}
+            </span>
+          )}
+          {isCrawling && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+          )}
+        </button>
+      </div>
 
       <div className="flex flex-col md:flex-row flex-1 md:min-h-0 md:overflow-hidden">
         {/* Left Column: Configuration */}
