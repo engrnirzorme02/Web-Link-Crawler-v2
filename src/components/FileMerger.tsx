@@ -1,7 +1,7 @@
-import React, { useState, useRef } from 'react';
-import { Upload, Trash2, Download, Merge, FileText, File as FileIcon, X, Layers, Globe } from 'lucide-react';
-import { Session } from '../lib/firebase';
+import { Download, File as FileIcon, FileText, Globe, Layers, Merge, Trash2, Upload, X } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
+import React, { useRef, useState } from 'react';
+import { Session } from '../lib/firebase';
 
 // Setting up pdf.js worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;

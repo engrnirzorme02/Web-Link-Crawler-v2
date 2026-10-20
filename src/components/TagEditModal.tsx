@@ -1,7 +1,7 @@
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { AlertCircle, Check, Hash, Loader2, Plus, Sparkles, X } from 'lucide-react';
 import React, { useState } from 'react';
 import { Session, db } from '../lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { X, Hash, Plus, Sparkles, Loader2, Check, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface TagEditModalProps {

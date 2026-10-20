@@ -1,16 +1,32 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Download, Lock, AlertCircle, CheckCircle2, ArrowLeft, History, Boxes, Layout,
-  Smartphone, Cpu, Database, ShieldCheck, Activity, Sparkles, Layers, Globe,
-  Sliders, FileCode2, Tag, HeartPulse, GitCompare, Key, ChevronRight, Info,
-  ExternalLink, Zap, Terminal, Check, Delete
+import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp } from 'firebase/firestore';
+import {
+  AlertCircle,
+  ArrowLeft,
+  Boxes,
+  Check,
+  CheckCircle2,
+  Cpu, Database,
+  Delete,
+  Download,
+  FileCode2,
+  GitCompare,
+  HeartPulse,
+  History,
+  Layers,
+  Layout,
+  Lock,
+  Sliders,
+  Smartphone,
+  Sparkles,
+  Tag,
+  Zap
 } from 'lucide-react';
-import { db, auth } from '../lib/firebase';
-import { collection, addDoc, serverTimestamp, query, orderBy, limit, getDocs } from 'firebase/firestore';
-import { UI_BLUEPRINT, DEV_BLUEPRINT, BLUEPRINT_VERSION } from '../config/blueprints';
-import { BlueprintHistoryModal } from './BlueprintHistoryModal';
-import { BlueprintDashboardModal } from './BlueprintDashboardModal';
+import { useEffect, useState } from 'react';
+import { BLUEPRINT_VERSION, DEV_BLUEPRINT, UI_BLUEPRINT } from '../config/blueprints';
+import { auth, db } from '../lib/firebase';
 import { cn } from '../lib/utils';
+import { BlueprintDashboardModal } from './BlueprintDashboardModal';
+import { BlueprintHistoryModal } from './BlueprintHistoryModal';
 
 interface AboutPageProps {
   onBack?: () => void;

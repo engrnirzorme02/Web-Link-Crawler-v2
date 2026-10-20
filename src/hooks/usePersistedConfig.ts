@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 
 /**
  * usePersistedConfig

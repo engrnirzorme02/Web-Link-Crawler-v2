@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ArrowUp, ArrowDown, ChevronRight, ChevronsUpDown, EyeOff, SlidersHorizontal, Navigation } from 'lucide-react';
+import { ArrowDown, ArrowUp, EyeOff, Navigation } from 'lucide-react';
+import { useState } from 'react';
 
 export const GlobalScrollButtons = () => {
   const [isMinimized, setIsMinimized] = useState(false);

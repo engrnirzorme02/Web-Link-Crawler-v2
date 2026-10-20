@@ -1,12 +1,30 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  X, Save, FileText, Check, AlertCircle, Loader2, Bold, Italic, Strikethrough, 
-  Heading1, Heading2, List, ListOrdered, CheckSquare, Code, Quote, Link as LinkIcon, 
-  Eye, Edit3, Columns, Copy, Download, Trash2, Sparkles, BookOpen, Clock, Tag
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  AlertCircle,
+  Bold,
+  Check,
+  CheckSquare,
+  Clock,
+  Code,
+  Columns, Copy, Download,
+  Edit3,
+  Eye,
+  FileText,
+  Heading1, Heading2,
+  Italic,
+  Link as LinkIcon,
+  List, ListOrdered,
+  Loader2,
+  Quote,
+  Save,
+  Sparkles,
+  Strikethrough,
+  Trash2,
+  X
 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { db, Session } from '../lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '../lib/utils';
 
 interface SessionNotesModalProps {

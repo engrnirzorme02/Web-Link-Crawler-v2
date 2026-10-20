@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { collection, query, orderBy, getDocs } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { Clock, Download, FileText, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { db } from '../lib/firebase';
-import { Download, X, Clock, FileText } from 'lucide-react';
 
 interface BlueprintHistoryModalProps {
   onClose: () => void;

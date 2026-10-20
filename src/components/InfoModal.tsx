@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { X, Download, Info, Database, CheckCircle2, ShieldCheck } from 'lucide-react';
-import { cn, getMillis } from '../lib/utils';
+import { CheckCircle2, Database, Download, Info, ShieldCheck, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Session } from '../lib/firebase';
+import { cn, getMillis } from '../lib/utils';
 
 interface InfoModalProps {
   isOpen: boolean;

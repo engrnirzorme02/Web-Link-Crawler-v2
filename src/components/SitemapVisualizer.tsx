@@ -1,11 +1,21 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
-  Folder, FolderOpen, FileCode, Globe, ChevronRight, ChevronDown, 
-  Download, Copy, Check, ExternalLink, Search, Filter, 
-  Maximize2, Minimize2, Eye, Shield, RefreshCw, FileText, 
-  Layers, Sparkles, Code2, Network
-} from 'lucide-react';
 import * as d3 from 'd3';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Code2,
+  Copy,
+  Download,
+  ExternalLink,
+  FileCode,
+  FileText,
+  Folder, FolderOpen,
+  Globe,
+  Layers,
+  Network,
+  Search
+} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { cn, extractSafeHostname } from '../lib/utils';
 
 export interface SitemapNode {

@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Download, Layers, Upload, Brain, Terminal, Trash2, FileText, Sparkles, Settings } from 'lucide-react';
-import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { AlertCircle, Brain, CheckCircle2, Copy, Download, FileText, Layers, Link as LinkIcon, Sparkles, Square, Terminal, Trash2, Upload } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import Markdown from 'react-markdown';
 import { createEventSourceConnection, fetchWithRetry } from '../lib/api';
 import { Session, db } from '../lib/firebase';
-import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
-import Markdown from 'react-markdown';
+import { cleanAndSanitizeUrl, cn, extractSafeHostname, truncateForFirestore } from '../lib/utils';
 
 interface CrawlResult {
   url: string;

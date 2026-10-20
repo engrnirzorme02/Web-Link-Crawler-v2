@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
 import * as d3 from 'd3';
+import { useEffect, useRef } from 'react';
 
 interface VisualizerProps {
   results: { url: string; source?: string }[];

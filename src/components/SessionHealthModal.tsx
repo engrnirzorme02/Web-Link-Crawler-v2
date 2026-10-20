@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  X, HeartPulse, AlertTriangle, CheckCircle2, XCircle, 
-  RefreshCw, Trash2, ExternalLink, ShieldAlert, Loader2, Download, Check
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  AlertTriangle, CheckCircle2,
+  ExternalLink,
+  HeartPulse,
+  Loader2,
+  RefreshCw, Trash2,
+  X,
+  XCircle
 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { Session, db } from '../lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { cn } from '../lib/utils';
 
 interface UrlHealthResult {

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Loader2, Filter, Copy, Download, CheckSquare, Square, DownloadCloud } from 'lucide-react';
+import { Search, Loader2, Copy, CheckSquare, Square, DownloadCloud } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface YTVideo {

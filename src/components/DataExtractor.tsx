@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Copy, Trash2, Link as LinkIcon, AlignLeft, CheckCircle2, Upload, X, FileText, Download } from 'lucide-react';
-import { cn, cleanAndSanitizeUrl, extractCleanUrlsFromText } from '../lib/utils';
+import { AlignLeft, CheckCircle2, Copy, Download, FileText, Link as LinkIcon, Trash2, Upload, X } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { cn, extractCleanUrlsFromText } from '../lib/utils';
 
 export function DataExtractor() {
   const [input, setInput] = useState('');
