@@ -1,9 +1,9 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { Play, Square, Download, Globe, Loader2, Key, AlertTriangle, CheckCircle, FileX, Filter, Settings2, Save, Layers, Upload, X, FileText } from 'lucide-react';
-import { cn, truncateForFirestore } from '../lib/utils';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { AlertTriangle, CheckCircle, Download, FileText, FileX, Globe, Key, Layers, Loader2, Play, Settings2, Square, Upload, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchWithRetry } from '../lib/api';
 import { db, Session } from '../lib/firebase';
-import { doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { cn, truncateForFirestore } from '../lib/utils';
 import { SessionNotesModal } from './SessionNotesModal';
 
 interface BulkFetcherProps {

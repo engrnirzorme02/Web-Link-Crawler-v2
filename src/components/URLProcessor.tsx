@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { db, Session } from '../lib/firebase';
-import { doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { Settings2, Play, CheckCircle2, Copy, FileX, Scissors, Filter, Upload, ChevronDown, Download, X, FileText, RotateCcw } from 'lucide-react';
-import { cn, truncateForFirestore, cleanAndSanitizeUrl } from '../lib/utils';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { CheckCircle2, Copy, Download, FileText, FileX, Play, RotateCcw, Settings2, Upload, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { usePersistedConfig } from '../hooks/usePersistedConfig';
+import { db, Session } from '../lib/firebase';
+import { cleanAndSanitizeUrl, cn, truncateForFirestore } from '../lib/utils';
 
 interface URLProcessorProps {
   session?: Session | null;

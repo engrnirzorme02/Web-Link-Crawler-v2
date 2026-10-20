@@ -1,9 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Session, db } from '../lib/firebase';
-import { doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { Send, Bot, User, Copy, CheckCircle2, AlertCircle, Sparkles, Loader2, Trash2, ChevronDown, Download, CheckSquare, Square, FileJson, FileText, File, Volume2, SquareSquare, Mic, Settings2, X, Upload } from 'lucide-react';
-import { cn, truncateForFirestore } from '../lib/utils';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { AlertCircle, Bot, CheckCircle2, CheckSquare, ChevronDown, Copy, Download, File, FileJson, FileText, Loader2, Mic, Send, Settings2, Sparkles, Square, Trash2, Upload, User, Volume2, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Session, db } from '../lib/firebase';
+import { cn } from '../lib/utils';
 import { ApiUsageMonitor } from './ApiUsageMonitor';
 
 interface Message {

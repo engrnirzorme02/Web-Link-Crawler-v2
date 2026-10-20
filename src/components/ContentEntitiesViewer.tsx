@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
-import { 
-  Mail, Phone, Share2, Globe, FileText, Copy, Check, Download, 
-  Search, ExternalLink, ArrowRight, Loader2, Sparkles, Filter, 
-  Hash, ShieldCheck, Database, Send
+import {
+  Check,
+  Copy,
+  Database,
+  Download,
+  ExternalLink,
+  Globe,
+  Loader2,
+  Mail, Phone,
+  Search,
+  Send,
+  Share2,
+  Sparkles
 } from 'lucide-react';
-import { ParsedPageData, PageMetadata, ExtractedEntities } from '../lib/firebase';
+import React, { useState } from 'react';
+import { ParsedPageData } from '../lib/firebase';
 import { cn } from '../lib/utils';
 
 interface ContentEntitiesViewerProps {

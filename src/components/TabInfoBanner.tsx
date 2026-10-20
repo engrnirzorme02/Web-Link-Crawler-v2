@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
-import { Info, ChevronDown, ChevronUp } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { ChevronDown, ChevronUp, Info } from 'lucide-react';
+import { useState } from 'react';
 
 interface Props {
   tab: string;

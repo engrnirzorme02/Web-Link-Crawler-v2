@@ -1,14 +1,24 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { 
-  FolderOpen, Save, Trash2, Calendar, FileText, Globe, 
-  Download, Upload, Check, AlertCircle, X, Search, Clock,
-  ExternalLink, Layers, ArrowRight, ShieldCheck, Sparkles,
-  Smartphone, HardDrive, Tag, Cloud, CloudOff
-} from 'lucide-react';
-import { Session, db } from '../lib/firebase';
 import { formatDistanceToNow } from 'date-fns';
-import { getMillis, cn, extractSafeHostname } from '../lib/utils';
-import { collection, addDoc, updateDoc, doc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  AlertCircle,
+  ArrowRight,
+  Check,
+  Clock,
+  Cloud,
+  Download,
+  FolderOpen, Save,
+  Search,
+  ShieldCheck,
+  Smartphone,
+  Tag,
+  Trash2,
+  Upload,
+  X
+} from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Session, db } from '../lib/firebase';
+import { cn, extractSafeHostname, getMillis } from '../lib/utils';
 
 interface CrawlerSessionManagerModalProps {
   isOpen: boolean;

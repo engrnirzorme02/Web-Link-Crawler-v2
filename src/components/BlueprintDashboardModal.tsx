@@ -1,12 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  X, Layout, Database, Cpu, Layers, ShieldCheck, ArrowRight, 
-  Activity, Sparkles, Server, CheckCircle2, Zap, Globe, Lock, 
-  RefreshCw, Terminal, Code, Boxes, Bot, HardDrive, FileText, Check, AlertTriangle, Download
-} from 'lucide-react';
-import { BLUEPRINT_VERSION, UI_BLUEPRINT, DEV_BLUEPRINT } from '../config/blueprints';
-import { db, auth } from '../lib/firebase';
 import { doc, getDocFromServer } from 'firebase/firestore';
+import {
+  Activity,
+  Boxes,
+  Check,
+  CheckCircle2,
+  Cpu,
+  Database,
+  Download,
+  Layers,
+  Layout,
+  Lock,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  X,
+  Zap
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { BLUEPRINT_VERSION, DEV_BLUEPRINT, UI_BLUEPRINT } from '../config/blueprints';
+import { auth, db } from '../lib/firebase';
 
 interface BlueprintDashboardModalProps {
   onClose: () => void;

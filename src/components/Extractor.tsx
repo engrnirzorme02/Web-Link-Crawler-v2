@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Copy, CheckCircle2, Link as LinkIcon, FileText, Download, ChevronDown, ChevronUp, Trash2, Layers, Upload } from 'lucide-react';
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { CheckCircle2, ChevronDown, ChevronUp, Copy, Download, FileText, Layers, Link as LinkIcon, Trash2, Upload } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Session, db } from '../lib/firebase';
-import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
-import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractCleanUrlsFromText } from '../lib/utils';
+import { cleanAndSanitizeUrl, cn, extractCleanUrlsFromText, truncateForFirestore } from '../lib/utils';
 
 interface ExtractorProps {
   session: Session | null;

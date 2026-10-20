@@ -1,19 +1,37 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Calendar, Clock, Play, Pause, Trash2, Plus, Edit2, CheckCircle2, 
-  XCircle, AlertTriangle, RefreshCw, Bell, BellOff, Download, 
-  ExternalLink, Layers, History, Shield, ArrowRight, Loader2, Sparkles,
-  Search, Filter
-} from 'lucide-react';
-import { 
-  db, CrawlSchedule, CrawlLog, handleFirestoreError, OperationType 
-} from '../lib/firebase';
-import { 
-  collection, query, where, onSnapshot, addDoc, updateDoc, 
-  deleteDoc, doc, serverTimestamp, orderBy 
+import { addDays, addHours, addWeeks, format, formatDistanceToNow } from 'date-fns';
+import {
+  addDoc,
+  collection,
+  deleteDoc, doc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where
 } from 'firebase/firestore';
+import {
+  Bell,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  Download,
+  Edit2,
+  History,
+  Loader2,
+  Pause,
+  Play,
+  Plus,
+  Shield,
+  Trash2
+} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  CrawlLog,
+  CrawlSchedule,
+  db,
+  handleFirestoreError, OperationType
+} from '../lib/firebase';
 import { cn, getMillis, truncateForFirestore } from '../lib/utils';
-import { format, formatDistanceToNow, addHours, addDays, addWeeks } from 'date-fns';
 
 interface SchedulerDashboardProps {
   userId: string | null;

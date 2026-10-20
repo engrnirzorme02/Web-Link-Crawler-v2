@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Copy, CheckCircle2, AlertCircle, Link as LinkIcon, Globe, FileText, Settings, Loader2, ChevronDown, ChevronUp, Terminal, Download, Save, Zap, Trash2, Layers, Upload, Search, Cloud, CloudOff, Check, X, Edit2, Info, FolderOpen, Shield, Mail, Phone, Share2, Network, CalendarClock, Code2, Sparkles, RotateCcw, Minus, Plus, BarChart3 } from 'lucide-react';
-import { cn, truncateForFirestore, cleanAndSanitizeUrl, extractSafeHostname } from '../lib/utils';
-import { createEventSourceConnection, fetchWithRetry, logNetworkEvent } from '../lib/api';
-import { Session, db, ParsedPageData } from '../lib/firebase';
-import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { AlertCircle, BarChart3, Check, CheckCircle2, ChevronDown, ChevronUp, Cloud, CloudOff, Code2, Copy, Download, Edit2, FileText, FolderOpen, Globe, Layers, Link as LinkIcon, Loader2, Minus, Network, Play, Plus, RotateCcw, Settings, Shield, Sparkles, Square, Terminal, Trash2, Upload, X, Zap } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { usePersistedConfig } from '../hooks/usePersistedConfig';
+import { createEventSourceConnection } from '../lib/api';
+import { db, ParsedPageData, Session } from '../lib/firebase';
+import { cleanAndSanitizeUrl, cn, extractSafeHostname, truncateForFirestore } from '../lib/utils';
+import { ContentEntitiesViewer } from './ContentEntitiesViewer';
 import { CrawlVisualizer } from './CrawlVisualizer';
 import { CrawlerSessionManagerModal } from './CrawlerSessionManagerModal';
 import { SessionNotesModal } from './SessionNotesModal';
 import { SitemapVisualizer } from './SitemapVisualizer';
-import { ContentEntitiesViewer } from './ContentEntitiesViewer';
-import { usePersistedConfig } from '../hooks/usePersistedConfig';
 
 type CrawlMode = 'single' | 'subdir' | 'domain';
 

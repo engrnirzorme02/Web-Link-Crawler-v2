@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Activity, AlertTriangle, Cpu, CheckCircle2, RefreshCw, X, Database, Key, ShieldCheck, Flame, ArrowRight, Zap, BellRing } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BellRing, CheckCircle2, Cpu, Flame, Key, RefreshCw, ShieldCheck, X, Zap } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/utils';
 
 export interface KeyStatus {

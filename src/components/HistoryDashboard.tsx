@@ -1,23 +1,56 @@
-import React, { useMemo, useState, useRef } from 'react';
-import { Session, db } from '../lib/firebase';
-import { 
-  History, Play, FileText, Globe, Brain, ListOrdered, Calendar, 
-  Layers, Download, RefreshCw, Trash2, Pin, Archive, 
-  ArchiveRestore, Upload, Hash, CheckCircle2, Loader2, Database,
-  CheckSquare, Square, Search, Sparkles, ArrowLeftRight, GitCompare, Plus, Tag, X,
-  HeartPulse, AlertTriangle, BarChart2, PieChart as PieChartIcon, Activity, TrendingUp
-} from 'lucide-react';
-import { 
-  ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, 
-  AreaChart, Area, XAxis, YAxis, Tooltip, Legend, CartesianGrid 
-} from 'recharts';
 import { formatDistanceToNow } from 'date-fns';
-import { getMillis, cn } from '../lib/utils';
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import {
+  AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  ArrowLeftRight,
+  BarChart2,
+  Brain,
+  Calendar,
+  CheckCircle2,
+  CheckSquare,
+  Database,
+  Download,
+  FileText, Globe,
+  Hash,
+  HeartPulse,
+  History,
+  Layers,
+  ListOrdered,
+  Loader2,
+  PieChart as PieChartIcon,
+  Pin,
+  Play,
+  Plus,
+  RefreshCw,
+  Search, Sparkles,
+  Square,
+  Trash2,
+  TrendingUp,
+  Upload,
+  X
+} from 'lucide-react';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis, YAxis
+} from 'recharts';
+import { Session, db } from '../lib/firebase';
+import { cn, getMillis } from '../lib/utils';
 import { GlobalExport } from './GlobalExport';
-import { collection, addDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { SessionCompareModal } from './SessionCompareModal';
-import { TagEditModal } from './TagEditModal';
 import { SessionHealthModal } from './SessionHealthModal';
+import { TagEditModal } from './TagEditModal';
 
 // Inline SVG Mini-Trendline component showing volume progression next to saved session cards
 function SessionVolumeTrendline({ results }: { results?: any[] }) {

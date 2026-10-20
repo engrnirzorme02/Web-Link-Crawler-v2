@@ -1,12 +1,16 @@
-import React, { useState, useMemo } from 'react';
-import { Session } from '../lib/firebase';
-import { 
-  X, GitCompare, Download, Copy, Check, Search, ExternalLink, 
-  Layers, Globe, Calendar, ArrowRight, ArrowLeftRight, CheckCircle2,
-  AlertCircle, Sparkles, Filter
-} from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { getMillis, cn } from '../lib/utils';
+import {
+  ArrowLeftRight,
+  Check,
+  CheckCircle2,
+  Copy,
+  Download,
+  Search,
+  X
+} from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Session } from '../lib/firebase';
+import { cn, getMillis } from '../lib/utils';
 
 interface SessionCompareModalProps {
   sessionA: Session;
