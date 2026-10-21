@@ -2,7 +2,7 @@ import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/fi
 import { AlertCircle, BarChart3, Check, CheckCircle2, ChevronDown, ChevronUp, Cloud, CloudOff, Code2, Copy, Download, Edit2, FileText, FolderOpen, Globe, Layers, Link as LinkIcon, Loader2, Minus, Network, Play, Plus, RotateCcw, Settings, Shield, Sparkles, Square, Terminal, Trash2, Upload, X, Zap } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import { usePersistedConfig } from '../hooks/usePersistedConfig';
-import { createEventSourceConnection } from '../lib/api';
+import { apiUrl, createEventSourceConnection } from '../lib/api';
 import { db, ParsedPageData, Session } from '../lib/firebase';
 import { cleanAndSanitizeUrl, cn, extractSafeHostname, truncateForFirestore } from '../lib/utils';
 import { ContentEntitiesViewer } from './ContentEntitiesViewer';
@@ -459,7 +459,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
     addLog(`Starting subdomain discovery for ${targetDomain}...`);
 
     try {
-        const response = await fetch(`/api/subdomains?domain=${encodeURIComponent(targetDomain)}`);
+        const response = await fetch(apiUrl(`/api/subdomains?domain=${encodeURIComponent(targetDomain)}`));
         if (!response.ok) {
             throw new Error('Failed to fetch subdomains');
         }

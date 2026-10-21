@@ -896,6 +896,41 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
+  // Explicit, least-privilege CORS for separately hosted web/mobile clients.
+  // Configure CORS_ALLOWED_ORIGINS as a comma-separated list of exact origins,
+  // e.g. https://app.example.com,https://localhost,capacitor://localhost.
+  const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+  if (process.env.APP_URL) {
+    try {
+      const appOrigin = new URL(process.env.APP_URL).origin;
+      if (appOrigin !== 'null') configuredOrigins.push(appOrigin);
+    } catch {
+      console.warn('[CORS] APP_URL is not a valid absolute URL; ignoring it for CORS.');
+    }
+  }
+  const allowedOrigins = new Set(configuredOrigins);
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && allowedOrigins.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Last-Event-ID');
+      // Expose only headers that client code may need; SSE does not require a broad expose list.
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Type, X-Request-Id');
+    }
+    if (req.method === 'OPTIONS') {
+      if (origin && !allowedOrigins.has(origin)) {
+        return res.status(403).send('Origin not allowed by CORS policy.');
+      }
+      return res.status(204).end();
+    }
+    return next();
+  });
+
   // Cloud Run and container health check endpoints
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

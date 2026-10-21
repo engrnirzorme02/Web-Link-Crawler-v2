@@ -2,7 +2,7 @@ import { addDoc, collection, doc, serverTimestamp, updateDoc } from 'firebase/fi
 import { AlertCircle, Brain, CheckCircle2, Copy, Download, FileText, Layers, Link as LinkIcon, Sparkles, Square, Terminal, Trash2, Upload } from 'lucide-react';
 import React, { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
-import { createEventSourceConnection, fetchWithRetry } from '../lib/api';
+import { apiUrl, createEventSourceConnection, fetchWithRetry } from '../lib/api';
 import { Session, db } from '../lib/firebase';
 import { cleanAndSanitizeUrl, cn, extractSafeHostname, truncateForFirestore } from '../lib/utils';
 
