@@ -708,18 +708,18 @@ export function SmartCrawler({ session, userId, onSessionCreated }: SmartCrawler
             {!isCrawling ? (
               <button 
                 onClick={handleStart}
-                className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-rose-600 hover:from-purple-700 hover:to-rose-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-lg hover:shadow-purple-600/25 active:scale-[0.98]"
+                className="w-full min-h-[48px] flex items-center justify-center gap-2 bg-[#287653] hover:bg-[#216345] dark:bg-[#287653] dark:hover:bg-[#216345] text-white font-semibold py-3.5 rounded-xl transition-all shadow-sm active:scale-[0.98] text-sm"
               >
                 <Brain className="w-5 h-5 fill-current" />
-                Start AI Crawl
+                <span>Start AI Crawl</span>
               </button>
             ) : (
               <button 
                 onClick={handleStop}
-                className="w-full flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-lg hover:shadow-red-600/25 active:scale-[0.98]"
+                className="w-full min-h-[48px] flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white font-medium py-3.5 rounded-xl transition-all shadow-sm active:scale-[0.98] text-sm"
               >
                 <Square className="w-5 h-5 fill-current" />
-                Stop Crawling
+                <span>Stop Crawling</span>
               </button>
             )}
           </div>

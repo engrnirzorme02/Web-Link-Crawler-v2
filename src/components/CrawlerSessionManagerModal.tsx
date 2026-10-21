@@ -99,8 +99,6 @@ export function CrawlerSessionManagerModal({
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   // Combine Cloud sessions and Local offline sessions
   const mergedSessions = useMemo(() => {
     const cloud = sessions.filter(s => s.type === 'crawler' || s.type === 'smart_crawler');
@@ -326,6 +324,8 @@ export function CrawlerSessionManagerModal({
       setStatusFeedback({ type: 'error', message: 'Failed to read file: invalid JSON format.' });
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-zinc-950/70 backdrop-blur-sm animate-in fade-in duration-200">

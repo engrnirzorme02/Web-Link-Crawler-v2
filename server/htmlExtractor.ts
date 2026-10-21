@@ -161,62 +161,101 @@ export function cleanAndExtractStructuredContent(html: string, pageUrl: string =
     ''
   ).trim();
 
-  // 2. Unconditional Noise Removal
+  // 2. Unconditional Noise Removal (scripts, styles, tracking iframes)
   $(
     'script, style, noscript, iframe, svg, canvas, embed, object, param, template'
   ).remove();
 
-  // 3. Boilerplate Chrome & Navigation Removal
-  $(
-    'header, nav, footer, aside, menu, dialog, ' +
-    '[role="banner"], [role="navigation"], [role="complementary"], [role="contentinfo"], ' +
-    '[role="search"], [role="dialog"], [role="alertdialog"], ' +
-    // Cookie & Consent Banners
-    '#cookie-banner, #cookie-consent, #onetrust-consent-sdk, #CybotCookiebotDialog, ' +
-    '.cookie-notice, .cookie-banner, .gdpr-banner, .consent-banner, ' +
-    // Modals, Overlays & Popups
-    '.modal, .modal-backdrop, .overlay, .popup, .newsletter-popup, .newsletter-signup, ' +
-    // Chrome Navigation & Utilities
-    '.site-header, .site-footer, .global-nav, .top-nav, .sidebar-nav, .breadcrumbs, .pagination, ' +
-    '.social-share, .share-buttons, .author-bio, .advertisement, .ad, .ads, .ad-banner'
-  ).remove();
+  // Check if this is a GitHub URL (repository, raw code, blob, issue, PR, discussion, gist, etc.)
+  // As requested: "github এর link পেলে যেনো প্রতিটি লিঙ্ক এর full পেইজ এর কন্টেন্ট যেনো আনে.. কারণ GitHub থেকে বাদ দেয়ার কিছু নাই"
+  const isGitHubUrl = /(?:github\.com|githubusercontent\.com|gist\.github\.com)/i.test(pageUrl);
+
+  if (!isGitHubUrl) {
+    // 3. Boilerplate Chrome, Header, Navigation & Footer Removal for normal web pages
+    // As requested: "তখন যেনো ওই পেইজ এর মেনু, footar এইসব যেনো না আসে"
+    $(
+      // Semantic navigation, header and footer tags
+      'header, nav, footer, aside, menu, dialog, ' +
+      '[role="banner"], [role="navigation"], [role="complementary"], [role="contentinfo"], ' +
+      '[role="search"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="menubar"], ' +
+      // Common Menu & Navigation classes and IDs
+      '.menu, .main-menu, .nav, .navbar, .site-nav, .main-nav, .navigation, .mobile-menu, ' +
+      '.top-nav, .header-nav, .nav-menu, .dropdown-menu, .off-canvas, .hamburger, ' +
+      '#menu, #nav, #navbar, #navigation, #site-navigation, #main-menu, ' +
+      // Common Header classes and IDs
+      '.site-header, .top-header, .page-header, .header, #header, #site-header, ' +
+      // Common Footer & Copyright classes and IDs
+      '.site-footer, .page-footer, .footer, .bottom-footer, .footer-menu, .footer-links, ' +
+      '.footer-nav, .footer-widgets, .sub-footer, .copyright, .copyright-text, #footer, #site-footer, ' +
+      // Cookie & Consent Banners
+      '#cookie-banner, #cookie-consent, #onetrust-consent-sdk, #CybotCookiebotDialog, ' +
+      '.cookie-notice, .cookie-banner, .gdpr-banner, .consent-banner, .cookie-law-info-bar, ' +
+      // Modals, Overlays & Popups
+      '.modal, .modal-backdrop, .overlay, .popup, .newsletter-popup, .newsletter-signup, ' +
+      // Chrome Navigation, Breadcrumbs & Utilities
+      '.sidebar, .sidebar-nav, .breadcrumbs, .breadcrumb, .pagination, #sidebar, ' +
+      '.social-share, .share-buttons, .author-bio, .advertisement, .ad, .ads, .ad-banner, .widget, .widget-area'
+    ).remove();
+  }
 
   // 4. Primary Content Targeting
-  // Look for semantic main content containers with substantive text
-  const candidateSelectors = [
-    'main',
-    'article',
-    '[role="main"]',
-    '#main-content',
-    '#content',
-    '.main-content',
-    '.article-content',
-    '.post-content',
-    '.entry-content',
-    '.documentation-content',
-    '.docs-content',
-    '.markdown-body',
-    '.content-area',
-    '.page-content',
-    '#main'
-  ];
-
+  // For GitHub URLs, we retain the entire page, code, and markdown without dropping anything!
+  let targetElement: cheerio.Cheerio<any>;
   let selectedContainer: cheerio.Cheerio<any> | null = null;
   let maxTextLength = 0;
 
-  for (const selector of candidateSelectors) {
-    const candidate = $(selector);
-    if (candidate.length > 0) {
-      const textLen = candidate.text().replace(/\s+/g, ' ').trim().length;
-      if (textLen > maxTextLength) {
-        maxTextLength = textLen;
-        selectedContainer = candidate.first();
+  if (isGitHubUrl) {
+    // Check if GitHub has rendered code lines (e.g. blob/file viewer)
+    const codeArea = $(
+      '#read-only-cursor-text-area, textarea[aria-label="file content"], .blob-wrapper, table.highlight, .react-code-text, div[data-selector="repos-split-pane"]'
+    );
+    const markdownBody = $('.markdown-body, #readme article, article.markdown-body');
+    const issueTimeline = $('[data-testid="issue-timeline"], .timeline-comment-group, .js-discussion');
+
+    if (codeArea.length > 0 && codeArea.text().trim().length > 20) {
+      // It's a GitHub Code/Blob file page -> preserve code completely!
+      targetElement = $('body');
+    } else if (markdownBody.length > 0 && markdownBody.text().trim().length > 100) {
+      // If it's a repo with README or markdown, include entire body so repo metadata + markdown are both kept!
+      targetElement = $('body');
+    } else {
+      // General GitHub page (issues, PRs, wiki, repo root) -> keep entire body!
+      targetElement = $('body');
+    }
+  } else {
+    // Look for semantic main content containers with substantive text for standard websites
+    const candidateSelectors = [
+      'main',
+      'article',
+      '[role="main"]',
+      '#main-content',
+      '#content',
+      '.main-content',
+      '.article-content',
+      '.post-content',
+      '.entry-content',
+      '.documentation-content',
+      '.docs-content',
+      '.markdown-body',
+      '.content-area',
+      '.page-content',
+      '#main'
+    ];
+
+    for (const selector of candidateSelectors) {
+      const candidate = $(selector);
+      if (candidate.length > 0) {
+        const textLen = candidate.text().replace(/\s+/g, ' ').trim().length;
+        if (textLen > maxTextLength) {
+          maxTextLength = textLen;
+          selectedContainer = candidate.first();
+        }
       }
     }
-  }
 
-  // Fallback to <body> if no suitable container has > 120 chars
-  const targetElement = (selectedContainer && maxTextLength > 120) ? selectedContainer : $('body');
+    // Fallback to <body> if no suitable container has > 120 chars
+    targetElement = (selectedContainer && maxTextLength > 120) ? selectedContainer : $('body');
+  }
 
   // Count tables and code blocks for telemetry
   const tablesCount = targetElement.find('table').length;

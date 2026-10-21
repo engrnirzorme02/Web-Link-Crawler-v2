@@ -1542,8 +1542,36 @@ CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
 
           if (response.status >= 400) {
             errorsCount++;
+            let errorType = 'HTTP_ERROR';
+            let suggestion = 'Check if the URL path is valid or if the site requires authentication.';
+            if (response.status === 404) {
+              errorType = 'NOT_FOUND';
+              suggestion = 'The requested resource was not found on this server (broken link or deleted page).';
+            } else if (response.status === 403) {
+              errorType = 'FORBIDDEN';
+              suggestion = 'Access Denied (403 Forbidden). The site may block automated crawlers, require a browser session, or be protected by a WAF.';
+            } else if (response.status === 401) {
+              errorType = 'UNAUTHORIZED';
+              suggestion = 'Authentication Required (401 Unauthorized). Provide credentials or Authorization request headers.';
+            } else if (response.status === 429) {
+              errorType = 'RATE_LIMITED';
+              suggestion = 'Too Many Requests (429 Rate Limited). Increase polite crawl delay (e.g. 500ms or 1000ms).';
+            } else if (response.status >= 500) {
+              errorType = 'SERVER_ERROR';
+              suggestion = `Remote server error (${response.status} ${response.statusText || 'Internal Server Error'}). The host is experiencing difficulties.`;
+            }
+
+            sendEvent('page_error', {
+              url: currentUrl,
+              statusCode: response.status,
+              errorType,
+              message: `HTTP ${response.status} ${response.statusText || 'Error'}`,
+              suggestion,
+              timestamp: Date.now()
+            });
+
             sendEvent('status', { 
-              log: `HTTP ${response.status} (${response.statusText || 'Error'}) encountered on ${currentUrl}`,
+              log: `[${errorType}] HTTP ${response.status} on ${currentUrl}: ${suggestion}`,
               stats: { pagesCrawled, totalLinks: foundLinks.size, queueLength: toVisit.length, errors: errorsCount }
             });
           }
@@ -1625,8 +1653,40 @@ CRITICAL HALLUCINATION PREVENTION & REAL-TIME GROUNDING RULES:
           }
         } catch (error: any) {
           errorsCount++;
+          const isTimeout = error.code === 'ECONNABORTED' || error.message?.toLowerCase().includes('timeout');
+          const isDns = error.code === 'ENOTFOUND' || error.message?.toLowerCase().includes('getaddrinfo');
+          const isSsl = error.code?.includes('SSL') || error.code?.includes('CERT') || error.message?.toLowerCase().includes('certificate');
+          const isBlocked = error.response?.status === 403 || error.response?.status === 401;
+
+          let errorType = 'NETWORK_ERROR';
+          let suggestion = 'Check network connection or try again later.';
+          let statusCode = error.response?.status || (isTimeout ? 408 : 0);
+
+          if (isTimeout) {
+            errorType = 'TIMEOUT';
+            suggestion = 'Connection timed out (>8000ms). The destination server took too long to respond or is rate limiting.';
+          } else if (isDns) {
+            errorType = 'DNS_FAILURE';
+            suggestion = 'DNS resolution failed. Domain name could not be resolved to an IP address.';
+          } else if (isSsl) {
+            errorType = 'SSL_ERROR';
+            suggestion = 'SSL/TLS handshake failure. Invalid certificate, expired domain cert, or unsupported protocol.';
+          } else if (isBlocked) {
+            errorType = 'ACCESS_DENIED';
+            suggestion = 'Access denied by remote host firewall or anti-bot challenge.';
+          }
+
+          sendEvent('page_error', {
+            url: currentUrl,
+            statusCode,
+            errorType,
+            message: error.message || 'Request failed',
+            suggestion,
+            timestamp: Date.now()
+          });
+
           sendEvent('status', { 
-            log: `Failed to fetch ${currentUrl}: ${error.message}`,
+            log: `[${errorType}] Failed to fetch ${currentUrl}: ${error.message} - ${suggestion}`,
             stats: { pagesCrawled, totalLinks: foundLinks.size, queueLength: toVisit.length, errors: errorsCount }
           });
         }
@@ -2292,6 +2352,40 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
     const fetchUrl = async (url: string) => {
       if (!isClientConnected) return;
       try {
+        const isGitHubUrl = /(?:github\.com|githubusercontent\.com|gist\.github\.com)/i.test(url);
+
+        // Special handling for GitHub blob/file URLs:
+        // Automatically attempt fetching the raw file directly from raw.githubusercontent.com
+        // This guarantees 100% full, pristine code without any HTML wrappers
+        if (/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)/i.test(url)) {
+          const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)/i);
+          if (match) {
+            const rawGithubUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3]}/${match[4]}`;
+            try {
+              const rawRes = await axiosWithRetry(rawGithubUrl, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+                  ...customHeaders
+                },
+                timeout: 10000,
+                validateStatus: () => true
+              });
+              if (rawRes.status === 200 && rawRes.data) {
+                const rawContent = typeof rawRes.data === 'string' ? rawRes.data : JSON.stringify(rawRes.data, null, 2);
+                sendEvent('content', {
+                  url,
+                  content: rawContent,
+                  category: 'GitHub/Code',
+                  success: true
+                });
+                return;
+              }
+            } catch (rawErr) {
+              // If raw fetch fails, continue with standard fetch below
+            }
+          }
+        }
+
         const response = await axiosWithRetry(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -2319,7 +2413,8 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
         const rawContentType = response.headers['content-type'] || '';
         const contentTypeHeader = Array.isArray(rawContentType) ? rawContentType.join(' ') : String(rawContentType);
         let category = 'Unknown';
-        if (contentTypeHeader.includes('application/json')) category = 'JSON';
+        if (isGitHubUrl) category = 'GitHub';
+        else if (contentTypeHeader.includes('application/json')) category = 'JSON';
         else if (contentTypeHeader.includes('text/html') || contentTypeHeader.includes('application/xhtml+xml')) category = 'HTML';
         else if (contentTypeHeader.includes('text/css')) category = 'CSS';
         else if (contentTypeHeader.includes('application/javascript') || contentTypeHeader.includes('text/javascript')) category = 'JS';
@@ -2331,7 +2426,7 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
         let isUseless = false;
         let uselessReason = '';
 
-        if (category === 'JSON') {
+        if (contentTypeHeader.includes('application/json') && !isGitHubUrl) {
           const data = response.data;
           content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
           
@@ -2345,14 +2440,20 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
               isUseless = true;
               uselessReason = 'API Schema/Routes';
           }
-        } else if (category === 'HTML') {
+        } else if (category === 'HTML' || isGitHubUrl) {
           const rawHtml = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
           try {
             const extracted = cleanAndExtractStructuredContent(rawHtml, url);
             content = extracted.markdown || extracted.plainText;
           } catch {
             const $ = cheerio.load(rawHtml);
-            $('script, style, nav, footer, iframe, noscript, header, aside, .cookie-banner').remove();
+            if (!isGitHubUrl) {
+              // Strip menus, footers, headers for regular websites
+              $('script, style, noscript, iframe, header, nav, footer, aside, menu, .site-header, .site-footer, .nav, .navbar, .menu, .cookie-banner').remove();
+            } else {
+              // For GitHub, keep all content - only strip scripts/iframes
+              $('script, style, noscript, iframe').remove();
+            }
             content = $('body').text().replace(/\s+/g, ' ').trim();
           }
         } else {

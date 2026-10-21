@@ -54,7 +54,11 @@ interface SystemStatus {
   };
 }
 
-export function ApiUsageMonitor() {
+interface ApiUsageMonitorProps {
+  compact?: boolean;
+}
+
+export function ApiUsageMonitor({ compact = false }: ApiUsageMonitorProps) {
   const [model, setModel] = useState('gemini-3.5-flash');
   const [activeKeyLabel, setActiveKeyLabel] = useState('Key #1 in use');
   const [isOpen, setIsOpen] = useState(false);
@@ -238,43 +242,64 @@ export function ApiUsageMonitor() {
           if (!isOpen) fetchStatus();
         }}
         className={cn(
-          "flex items-center gap-2 bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] rounded-full px-3 py-1.5 shadow-xs hover:bg-[#F0F2EF] dark:hover:bg-[#262D28] transition-all focus:outline-none focus:ring-1 focus:ring-[#287653]",
+          "flex items-center transition-all focus:outline-none focus:ring-1 focus:ring-[#287653]",
+          compact 
+            ? "w-9 h-9 min-h-[36px] justify-center rounded-xl bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] shadow-2xs hover:bg-[#F0F2EF] dark:hover:bg-[#262D28] shrink-0" 
+            : "gap-2 bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] rounded-full px-3 py-1.5 shadow-xs hover:bg-[#F0F2EF] dark:hover:bg-[#262D28]",
           isOpen && "ring-1 ring-[#287653] shadow-sm",
           toastAlert && "ring-1 ring-amber-500 animate-pulse"
         )}
-        title="Gemini API Key রোটেশন ও ফেইলওভার পর্যবেক্ষণ দেখতে ক্লিক করুন"
+        title={`Gemini API Status: ${model} (${activeKeyLabel}) - Click to inspect rotation`}
       >
-        <div className="flex items-center gap-1.5 border-r border-[#DCE2DC] dark:border-[#3A443D] pr-2.5">
-          <Cpu className="w-3.5 h-3.5 text-[#287653] dark:text-[#75B992]" />
-          <span className="text-xs font-mono tabular-nums text-zinc-700 dark:text-zinc-300 max-w-[110px] truncate font-medium">
-            {model.split(' ')[0]}
-          </span>
-        </div>
-        
-        {/* Active Key Signal Indicator (e.g. 🟢 Key #1 in use) */}
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-2 w-2">
-            <span className={cn(
-              "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
-              isHealthy ? "bg-emerald-400" : "bg-amber-400"
-            )}></span>
-            <span className={cn(
-              "relative inline-flex rounded-full h-2 w-2",
-              isHealthy ? "bg-emerald-500" : "bg-amber-500"
-            )}></span>
-          </span>
-          <span className={cn(
-            "text-[11px] font-bold tracking-tight font-mono tabular-nums",
-            isHealthy ? "text-[#287653] dark:text-[#75B992]" : "text-amber-600 dark:text-amber-400"
-          )}>
-            🟢 {activeKeyLabel}
-          </span>
-        </div>
+        {compact ? (
+          <div className="relative flex items-center justify-center">
+            <Cpu className="w-4 h-4 text-[#287653] dark:text-[#75B992]" />
+            <span className="absolute -top-1 -right-1 flex h-2 w-2">
+              <span className={cn(
+                "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                isHealthy ? "bg-emerald-400" : "bg-amber-400"
+              )}></span>
+              <span className={cn(
+                "relative inline-flex rounded-full h-2 w-2",
+                isHealthy ? "bg-emerald-500" : "bg-amber-500"
+              )}></span>
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5 border-r border-[#DCE2DC] dark:border-[#3A443D] pr-2.5">
+              <Cpu className="w-3.5 h-3.5 text-[#287653] dark:text-[#75B992]" />
+              <span className="text-xs font-mono tabular-nums text-zinc-700 dark:text-zinc-300 max-w-[110px] truncate font-medium">
+                {model.split(' ')[0]}
+              </span>
+            </div>
+            
+            {/* Active Key Signal Indicator (e.g. 🟢 Key #1 in use) */}
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className={cn(
+                  "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                  isHealthy ? "bg-emerald-400" : "bg-amber-400"
+                )}></span>
+                <span className={cn(
+                  "relative inline-flex rounded-full h-2 w-2",
+                  isHealthy ? "bg-emerald-500" : "bg-amber-500"
+                )}></span>
+              </span>
+              <span className={cn(
+                "text-[11px] font-bold tracking-tight font-mono tabular-nums",
+                isHealthy ? "text-[#287653] dark:text-[#75B992]" : "text-amber-600 dark:text-amber-400"
+              )}>
+                🟢 {activeKeyLabel}
+              </span>
+            </div>
+          </>
+        )}
       </button>
 
       {/* 3. Detailed Monitor Modal Dropdown */}
       {isOpen && (
-        <div className="absolute top-full right-0 mt-2 w-92 sm:w-[420px] bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 overflow-hidden">
+        <div className="absolute top-full right-0 mt-2 w-80 sm:w-[420px] max-w-[90vw] bg-white dark:bg-[#1F2420] border border-[#DCE2DC] dark:border-[#3A443D] rounded-2xl shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 overflow-hidden">
           {/* Header */}
           <div className="p-4 border-b border-[#DCE2DC] dark:border-[#3A443D] flex items-center justify-between bg-[#F0F2EF] dark:bg-[#262D28]">
             <div>

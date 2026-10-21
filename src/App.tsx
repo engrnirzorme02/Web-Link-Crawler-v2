@@ -996,45 +996,53 @@ export default function App() {
           </div>
 
           <div className="space-y-1.5 w-full">
-            <a
-              href="/api/download-blueprint"
-              download="architectural_blueprint.md"
-              className="w-full flex items-center justify-center gap-2 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/80 font-medium py-2 rounded-xl transition-all text-xs shadow-2xs"
-              title="Download Full Architectural Blueprint Markdown file"
-            >
-              <Download className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span>Download Blueprint (MD)</span>
-            </a>
+            {/* Row 1: Compact Blueprint & Plan markdown downloads */}
+            <div className="grid grid-cols-2 gap-1.5 w-full">
+              <a
+                href="/api/download-blueprint"
+                download="architectural_blueprint.md"
+                className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-indigo-50/80 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200/70 dark:border-indigo-800/60 font-semibold rounded-xl text-[11px] transition-all shadow-2xs truncate"
+                title="Download Full Architectural Blueprint Markdown file"
+              >
+                <Download className="w-3 h-3 text-indigo-500 shrink-0" />
+                <span className="truncate">Blueprint (MD)</span>
+              </a>
 
-            <a
-              href="/api/download-plan"
-              download="implementation_plan.md"
-              className="w-full flex items-center justify-center gap-2 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/80 font-medium py-2 rounded-xl transition-all text-xs shadow-2xs"
-              title="Download Implementation Plan Markdown file"
-            >
-              <Download className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>Download Plan (MD)</span>
-            </a>
+              <a
+                href="/api/download-plan"
+                download="implementation_plan.md"
+                className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-blue-50/80 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/60 font-semibold rounded-xl text-[11px] transition-all shadow-2xs truncate"
+                title="Download Implementation Plan Markdown file"
+              >
+                <Download className="w-3 h-3 text-blue-500 shrink-0" />
+                <span className="truncate">Plan (MD)</span>
+              </a>
+            </div>
 
-            <button
-              onClick={() => {
-                setAppMode('general');
-                setActiveTab('history');
-                setSidebarOpen(false);
-              }}
-              className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold py-2.5 rounded-xl transition-all text-xs shadow-xs active:scale-[0.98]"
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span>Insights & Analytics Hub</span>
-            </button>
+            {/* Row 2: Analytics & Guide in a compact 2-col row */}
+            <div className="grid grid-cols-2 gap-1.5 w-full">
+              <button
+                onClick={() => {
+                  setAppMode('general');
+                  setActiveTab('history');
+                  setSidebarOpen(false);
+                }}
+                className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold text-[11px] shadow-2xs active:scale-95 transition-all truncate"
+                title="Insights & Analytics Hub"
+              >
+                <BarChart3 className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Analytics Hub</span>
+              </button>
 
-            <button
-              onClick={() => setInfoModalOpen(true)}
-              className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium py-2 rounded-xl transition-all text-xs"
-            >
-              <Info className="w-3.5 h-3.5" />
-              <span>Info & Guide</span>
-            </button>
+              <button
+                onClick={() => setInfoModalOpen(true)}
+                className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl bg-zinc-100 dark:bg-zinc-850 hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium text-[11px] border border-zinc-200/70 dark:border-zinc-750 transition-all truncate"
+                title="Info & User Guide"
+              >
+                <Info className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <span className="truncate">Info Guide</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1042,12 +1050,12 @@ export default function App() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-y-auto md:overflow-hidden relative custom-scrollbar">
         {/* Android Optimized Mobile Header */}
-        <header className="md:hidden flex items-center justify-between px-3.5 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 bg-white dark:bg-[#1F2420] border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0 gap-2 shadow-2xs z-30">
+        <header className="md:hidden flex items-center justify-between px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2.5 bg-white dark:bg-[#1F2420] border-b border-[#DCE2DC] dark:border-[#3A443D] shrink-0 gap-2 shadow-2xs z-30">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button 
               type="button"
               onClick={() => setSidebarOpen(true)} 
-              className="p-2 -ml-1 text-zinc-700 dark:text-zinc-300 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 active:scale-95 transition-transform"
+              className="p-2 -ml-1 text-zinc-700 dark:text-zinc-300 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 active:scale-95 transition-transform shrink-0"
               title="Open Navigation Drawer"
             >
               <Menu className="w-5 h-5" />
@@ -1056,33 +1064,14 @@ export default function App() {
               <span className="truncate text-xs font-bold text-[#202522] dark:text-[#F0F2EF] tracking-tight">
                 {activeSessionId ? activeSession?.title : (appMode === 'youtube' ? 'YouTube Tools' : 'NIRZOR CRAWLER v2')}
               </span>
-              <span className="text-[10px] text-zinc-400 font-mono">
+              <span className="text-[10px] text-zinc-400 font-mono truncate">
                 {appMode === 'youtube' ? 'Video Research' : (activeTab === 'smart_crawler' ? 'AI Grounded' : 'Engine Ready')}
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Quick General/YouTube Toggle on Mobile */}
-            <button
-              type="button"
-              onClick={() => {
-                setAppMode(prev => prev === 'general' ? 'youtube' : 'general');
-                setActiveSessionId(null);
-              }}
-              className={cn(
-                "min-h-[36px] px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 border transition-all active:scale-95",
-                appMode === 'youtube'
-                  ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-300 dark:border-red-900/60"
-                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700"
-              )}
-              title="Switch between Web & YouTube mode"
-            >
-              {appMode === 'youtube' ? <Youtube className="w-3.5 h-3.5 text-red-500" /> : <Globe className="w-3.5 h-3.5 text-[#287653]" />}
-              <span>{appMode === 'youtube' ? 'YT' : 'Web'}</span>
-            </button>
-
-            <ApiUsageMonitor />
+            <ApiUsageMonitor compact={true} />
 
             <button 
               type="button"
@@ -1090,7 +1079,7 @@ export default function App() {
                 setAppMode('about');
                 setActiveSessionId(null);
               }}
-              className="min-h-[36px] text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-2.5 py-1 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0 active:scale-95"
+              className="min-h-[34px] text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 px-2.5 py-1 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors shrink-0 active:scale-95 font-medium"
             >
               About
             </button>
@@ -1176,6 +1165,10 @@ export default function App() {
                >
                  <PanelLeft className="w-4 h-4" />
                </button>
+
+               <div className="hidden lg:block">
+                 <ApiUsageMonitor compact={false} />
+               </div>
 
                {activeSessionId && activeSession && (
                  <div className="flex items-center gap-1.5 truncate text-xs text-zinc-600 dark:text-zinc-400 bg-white/70 dark:bg-zinc-900/70 px-2.5 py-1.5 rounded-lg border border-zinc-200/60 dark:border-zinc-800/60 shadow-2xs">
