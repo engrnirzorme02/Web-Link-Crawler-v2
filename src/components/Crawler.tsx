@@ -459,7 +459,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
     addLog(`Starting subdomain discovery for ${targetDomain}...`);
 
     try {
-        const response = await fetch(`/api/subdomains?domain=${encodeURIComponent(targetDomain)}`);
+        const response = await fetch(apiUrl(`/api/subdomains?domain=${encodeURIComponent(targetDomain)}`));
         if (!response.ok) {
             throw new Error('Failed to fetch subdomains');
         }
