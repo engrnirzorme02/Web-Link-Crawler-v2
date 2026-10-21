@@ -1,189 +1,82 @@
-/**
- * Client API & Resilient Networking Service
- * Provides exponential backoff retries, status code logging, and SSE reconnect management.
- */
-
-export interface RetryOptions {
-  maxRetries?: number;
-  initialDelayMs?: number;
-  backoffFactor?: number;
-  onLog?: (message: string, type?: 'info' | 'error' | 'warning' | 'success') => void;
+/** Client API with centralized URL routing and resilient networking. */
+export interface RetryOptions { maxRetries?: number; initialDelayMs?: number; backoffFactor?: number; onLog?: (message: string, type?: 'info'|'error'|'warning'|'success') => void; }
+export function apiUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return base ? `${base}${normalizedPath}` : normalizedPath;
 }
-
-/**
- * Log networking event with structured tag to console and optional log callback.
- */
-export function logNetworkEvent(
-  message: string,
-  type: 'info' | 'error' | 'warning' | 'success' = 'info',
-  onLog?: (msg: string, type?: 'info' | 'error' | 'warning' | 'success') => void
-) {
-  const timestamp = new Date().toLocaleTimeString();
-  const consoleMsg = `[CRAWL_NETWORK_LOG ${timestamp}] ${message}`;
-
-  if (type === 'error') {
-    console.error(consoleMsg);
-  } else if (type === 'warning') {
-    console.warn(consoleMsg);
-  } else {
-    console.log(consoleMsg);
-  }
-
-  if (onLog) {
-    onLog(message, type);
-  }
+export function logNetworkEvent(message: string, type: 'info'|'error'|'warning'|'success' = 'info', onLog?: (msg: string, type?: 'info'|'error'|'warning'|'success') => void) {
+  const msg = `[CRAWL_NETWORK_LOG ${new Date().toLocaleTimeString()}] ${message}`;
+  if (type === 'error') console.error(msg); else if (type === 'warning') console.warn(msg); else console.log(msg);
+  onLog?.(message, type);
 }
-
-/**
- * Perform standard HTTP fetch with exponential backoff retry.
- * Handles network disconnections, server timeouts, and 5xx / 429 status codes gracefully.
- */
-export async function fetchWithRetry(
-  url: string,
-  options: RequestInit = {},
-  retryOpts: RetryOptions = {}
-): Promise<Response> {
+export async function fetchWithRetry(url: string, options: RequestInit = {}, retryOpts: RetryOptions = {}): Promise<Response> {
   const { maxRetries = 3, initialDelayMs = 1000, backoffFactor = 2, onLog } = retryOpts;
-
-  let attempt = 0;
-
+  const resolvedUrl = apiUrl(url); let attempt = 0;
   while (true) {
     try {
-      logNetworkEvent(`Requesting: ${options.method || 'GET'} ${url} (Attempt ${attempt + 1}/${maxRetries + 1})`, 'info', onLog);
-
-      const response = await fetch(url, options);
-
-      logNetworkEvent(`Response status code: HTTP ${response.status} (${response.statusText || 'OK'}) for ${url}`, 
-        response.ok ? 'success' : 'warning', 
-        onLog
-      );
-
-      // If status code is 429 or 5xx, and we still have retry attempts remaining:
+      logNetworkEvent(`Requesting: ${options.method || 'GET'} ${resolvedUrl} (Attempt ${attempt + 1}/${maxRetries + 1})`, 'info', onLog);
+      const response = await fetch(resolvedUrl, options);
+      logNetworkEvent(`HTTP ${response.status} for ${resolvedUrl}`, response.ok ? 'success' : 'warning', onLog);
       if ((response.status === 429 || (response.status >= 500 && response.status <= 599)) && attempt < maxRetries) {
-        attempt++;
-        const delay = Math.min(initialDelayMs * Math.pow(backoffFactor, attempt - 1) + Math.random() * 200, 10000);
-        logNetworkEvent(
-          `Server returned HTTP ${response.status}. Retrying in ${Math.round(delay)}ms (Attempt ${attempt}/${maxRetries})...`,
-          'warning',
-          onLog
-        );
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
+        attempt++; const delay = Math.min(initialDelayMs * Math.pow(backoffFactor, attempt - 1) + Math.random() * 200, 10000);
+        await new Promise(resolve => setTimeout(resolve, delay)); continue;
       }
-
       return response;
     } catch (error: any) {
       attempt++;
-      const isNetworkError = error.name === 'TypeError' || error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError');
-      const errDetail = isNetworkError ? 'Network glitch or connection refused' : error.message;
-
-      logNetworkEvent(
-        `Connection failure on ${url}: ${errDetail} (Attempt ${attempt}/${maxRetries + 1})`,
-        'error',
-        onLog
-      );
-
-      if (attempt > maxRetries) {
-        throw new Error(`Connection error to server (${errDetail}) after ${maxRetries} retry attempts.`);
-      }
-
+      const detail = error?.name === 'TypeError' ? 'Network glitch or connection refused' : (error?.message || String(error));
+      logNetworkEvent(`Connection failure on ${resolvedUrl}: ${detail} (Attempt ${attempt}/${maxRetries + 1})`, 'error', onLog);
+      if (attempt > maxRetries) throw new Error(`Connection error to server (${detail}) after ${maxRetries} retry attempts.`);
       const delay = Math.min(initialDelayMs * Math.pow(backoffFactor, attempt - 1) + Math.random() * 200, 10000);
-      logNetworkEvent(`Retrying connection to server in ${Math.round(delay)}ms...`, 'warning', onLog);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
 }
-
-/**
- * EventSource wrapper with exponential backoff reconnect logic.
- */
 export interface SSEOptions {
-  url: string;
-  onMessage: (data: any) => void;
-  onError?: (errorMessage: string) => void;
-  onLog?: (message: string, type?: 'info' | 'error' | 'warning' | 'success') => void;
-  maxRetries?: number;
-  initialDelayMs?: number;
+  url: string; onMessage: (data: any) => void; onError?: (errorMessage: string) => void;
+  onLog?: (message: string, type?: 'info'|'error'|'warning'|'success') => void;
+  maxRetries?: number; initialDelayMs?: number; stableConnectionMs?: number;
 }
-
-export function createEventSourceConnection({
-  url,
-  onMessage,
-  onError,
-  onLog,
-  maxRetries = 4,
-  initialDelayMs = 1000
-}: SSEOptions) {
-  let eventSource: EventSource | null = null;
-  let retryCount = 0;
-  let isClosedManually = false;
-  let reconnectTimer: NodeJS.Timeout | null = null;
-
+/**
+ * Exponential backoff for SSE. Retry budget resets only after a sustained connection.
+ * This reconnects transport only; server-side resume requires persisted job/event state.
+ */
+export function createEventSourceConnection({ url, onMessage, onError, onLog, maxRetries = 4, initialDelayMs = 1000, stableConnectionMs = 30000 }: SSEOptions) {
+  let eventSource: EventSource | null = null, retryCount = 0, isClosedManually = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null, stableTimer: ReturnType<typeof setTimeout> | null = null;
+  const resolvedUrl = apiUrl(url);
+  const clearStable = () => { if (stableTimer) clearTimeout(stableTimer); stableTimer = null; };
   const connect = () => {
     if (isClosedManually) return;
-
-    logNetworkEvent(`Connecting SSE stream to ${url} (Attempt ${retryCount + 1}/${maxRetries + 1})...`, 'info', onLog);
-
-    eventSource = new EventSource(url);
-
-    eventSource.onopen = () => {
-      logNetworkEvent(`SSE stream connected successfully (HTTP 200 OK) for ${url}`, 'success', onLog);
-      // Reset retry count on successful connection
-      retryCount = 0;
+    logNetworkEvent(`Connecting SSE stream to ${resolvedUrl} (Attempt ${retryCount + 1}/${maxRetries + 1})`, 'info', onLog);
+    const source = new EventSource(resolvedUrl); eventSource = source;
+    source.onopen = () => {
+      logNetworkEvent(`SSE connected: ${resolvedUrl}`, 'success', onLog);
+      clearStable(); stableTimer = setTimeout(() => { retryCount = 0; stableTimer = null; }, stableConnectionMs);
     };
-
-    eventSource.onmessage = (event) => {
+    source.onmessage = event => {
       if (isClosedManually) return;
-      try {
-        const parsed = JSON.parse(event.data);
-        onMessage(parsed);
-      } catch (err: any) {
-        console.error("Failed to parse SSE JSON chunk:", err);
-      }
+      try { onMessage(JSON.parse(event.data)); } catch (err) { console.error('Failed to parse SSE JSON chunk:', err); }
     };
-
-    eventSource.onerror = () => {
-      if (isClosedManually) return;
-
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-
-      retryCount++;
-
+    source.onerror = () => {
+      if (isClosedManually || eventSource !== source) return;
+      clearStable(); source.close(); eventSource = null; retryCount++;
       if (retryCount <= maxRetries) {
         const delay = Math.min(initialDelayMs * Math.pow(2, retryCount - 1) + Math.random() * 200, 10000);
-        logNetworkEvent(
-          `Connection error to server on SSE stream. Retrying in ${Math.round(delay)}ms (Attempt ${retryCount}/${maxRetries})...`,
-          'warning',
-          onLog
-        );
-
-        reconnectTimer = setTimeout(() => {
-          connect();
-        }, delay);
+        logNetworkEvent(`SSE interrupted; retrying in ${Math.round(delay)}ms (${retryCount}/${maxRetries})`, 'warning', onLog);
+        reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, delay);
       } else {
-        const fatalMsg = `Connection error to server after ${maxRetries} reconnect attempts. Please check network or server status.`;
-        logNetworkEvent(fatalMsg, 'error', onLog);
-        if (onError) {
-          onError(fatalMsg);
-        }
+        const message = `SSE connection failed after ${maxRetries} retries. Automatic reconnect cannot resume a server job unless job replay is implemented.`;
+        logNetworkEvent(message, 'error', onLog); onError?.(message);
       }
     };
   };
-
   connect();
-
-  return {
-    close: () => {
-      isClosedManually = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-      logNetworkEvent(`SSE stream closed by client.`, 'info', onLog);
-    }
-  };
+  return { close: () => {
+    isClosedManually = true; if (reconnectTimer) clearTimeout(reconnectTimer); clearStable();
+    reconnectTimer = null; eventSource?.close(); eventSource = null;
+    logNetworkEvent('SSE stream closed by client.', 'info', onLog);
+  } };
 }
