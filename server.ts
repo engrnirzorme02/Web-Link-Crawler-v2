@@ -2618,8 +2618,8 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
   });
 
   // Vite middleware for development vs static asset serving for production
-  const isDev = process.env.NODE_ENV === 'development';
-  if (isDev) {
+  const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.join(process.cwd(), 'dist/index.html'));
+  if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -2651,6 +2651,21 @@ Return ONLY a JSON array of strings, e.g. ["tech", "blog", "research"].`;
   });
   server.keepAliveTimeout = 120000; // 2 minutes
   server.headersTimeout = 120000;
+
+  server.on('error', (err: any) => {
+    console.error('[SERVER LISTEN ERROR]', err);
+  });
 }
 
-startServer();
+// Global safety net to prevent server process dies unexpectedly
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER UNCAUGHT EXCEPTION]', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[SERVER UNHANDLED REJECTION]', reason);
+});
+
+startServer().catch((err) => {
+  console.error('[FATAL SERVER START ERROR]', err);
+});
