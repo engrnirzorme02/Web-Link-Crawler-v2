@@ -132,10 +132,21 @@ export function SessionHealthModal({ session, onClose, onSessionUpdated }: Sessi
         return !brokenSet.has(u);
       });
 
-      await updateDoc(doc(db, 'sessions', session.id), {
-        results: updatedResults,
-        updatedAt: serverTimestamp()
-      });
+      if (session.id.startsWith('offline_')) {
+        const localKey = 'crawler_offline_sessions_v2';
+        const list = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const idx = list.findIndex((s: any) => s.id === session.id);
+        if (idx !== -1) {
+          list[idx].results = updatedResults;
+          list[idx].updatedAt = new Date().toISOString();
+          localStorage.setItem(localKey, JSON.stringify(list));
+        }
+      } else {
+        await updateDoc(doc(db, 'sessions', session.id), {
+          results: updatedResults,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       // Update local health state
       setHealthResults(prev => prev.filter(item => !brokenSet.has(item.url)));
@@ -164,10 +175,21 @@ export function SessionHealthModal({ session, onClose, onSessionUpdated }: Sessi
         return u !== targetUrl;
       });
 
-      await updateDoc(doc(db, 'sessions', session.id), {
-        results: updatedResults,
-        updatedAt: serverTimestamp()
-      });
+      if (session.id.startsWith('offline_')) {
+        const localKey = 'crawler_offline_sessions_v2';
+        const list = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const idx = list.findIndex((s: any) => s.id === session.id);
+        if (idx !== -1) {
+          list[idx].results = updatedResults;
+          list[idx].updatedAt = new Date().toISOString();
+          localStorage.setItem(localKey, JSON.stringify(list));
+        }
+      } else {
+        await updateDoc(doc(db, 'sessions', session.id), {
+          results: updatedResults,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       setHealthResults(prev => prev.filter(item => item.url !== targetUrl));
     } catch (err: any) {

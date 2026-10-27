@@ -3,6 +3,18 @@
  * Provides exponential backoff retries, status code logging, and SSE reconnect management.
  */
 
+/**
+ * Resolve API paths for same-origin web deployment or a separately hosted backend.
+ * VITE_API_BASE_URL is public client configuration only; never place secrets in it.
+ */
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/+$/, "");
+
+export function apiUrl(path: string): string {
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(path)) return path;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
+}
+
 export interface RetryOptions {
   maxRetries?: number;
   initialDelayMs?: number;
@@ -44,16 +56,17 @@ export async function fetchWithRetry(
   retryOpts: RetryOptions = {}
 ): Promise<Response> {
   const { maxRetries = 3, initialDelayMs = 1000, backoffFactor = 2, onLog } = retryOpts;
+  const requestUrl = apiUrl(url);
 
   let attempt = 0;
 
   while (true) {
     try {
-      logNetworkEvent(`Requesting: ${options.method || 'GET'} ${url} (Attempt ${attempt + 1}/${maxRetries + 1})`, 'info', onLog);
+      logNetworkEvent(`Requesting: ${options.method || 'GET'} ${requestUrl} (Attempt ${attempt + 1}/${maxRetries + 1})`, 'info', onLog);
 
-      const response = await fetch(url, options);
+      const response = await fetch(requestUrl, options);
 
-      logNetworkEvent(`Response status code: HTTP ${response.status} (${response.statusText || 'OK'}) for ${url}`, 
+      logNetworkEvent(`Response status code: HTTP ${response.status} (${response.statusText || 'OK'}) for ${requestUrl}`, 
         response.ok ? 'success' : 'warning', 
         onLog
       );
@@ -78,7 +91,7 @@ export async function fetchWithRetry(
       const errDetail = isNetworkError ? 'Network glitch or connection refused' : error.message;
 
       logNetworkEvent(
-        `Connection failure on ${url}: ${errDetail} (Attempt ${attempt}/${maxRetries + 1})`,
+        `Connection failure on ${requestUrl}: ${errDetail} (Attempt ${attempt}/${maxRetries + 1})`,
         'error',
         onLog
       );
@@ -114,22 +127,28 @@ export function createEventSourceConnection({
   maxRetries = 4,
   initialDelayMs = 1000
 }: SSEOptions) {
+  const resolvedUrl = apiUrl(url);
   let eventSource: EventSource | null = null;
   let retryCount = 0;
   let isClosedManually = false;
   let reconnectTimer: NodeJS.Timeout | null = null;
+  let stableConnectionTimer: ReturnType<typeof setTimeout> | null = null;
 
   const connect = () => {
     if (isClosedManually) return;
 
-    logNetworkEvent(`Connecting SSE stream to ${url} (Attempt ${retryCount + 1}/${maxRetries + 1})...`, 'info', onLog);
+    logNetworkEvent(`Connecting SSE stream to ${resolvedUrl} (Attempt ${retryCount + 1}/${maxRetries + 1})...`, 'info', onLog);
 
-    eventSource = new EventSource(url);
+    eventSource = new EventSource(resolvedUrl);
 
     eventSource.onopen = () => {
-      logNetworkEvent(`SSE stream connected successfully (HTTP 200 OK) for ${url}`, 'success', onLog);
-      // Reset retry count on successful connection
-      retryCount = 0;
+      logNetworkEvent(`SSE stream connected successfully (HTTP 200 OK) for ${resolvedUrl}`, 'success', onLog);
+      // Do not reset on a fleeting onopen: mobile networks/backgrounding can flap.
+      if (stableConnectionTimer) clearTimeout(stableConnectionTimer);
+      stableConnectionTimer = setTimeout(() => {
+        retryCount = 0;
+        stableConnectionTimer = null;
+      }, 30_000);
     };
 
     eventSource.onmessage = (event) => {
@@ -148,6 +167,10 @@ export function createEventSourceConnection({
       if (eventSource) {
         eventSource.close();
         eventSource = null;
+      }
+      if (stableConnectionTimer) {
+        clearTimeout(stableConnectionTimer);
+        stableConnectionTimer = null;
       }
 
       retryCount++;
@@ -179,6 +202,7 @@ export function createEventSourceConnection({
     close: () => {
       isClosedManually = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (stableConnectionTimer) clearTimeout(stableConnectionTimer);
       if (eventSource) {
         eventSource.close();
         eventSource = null;

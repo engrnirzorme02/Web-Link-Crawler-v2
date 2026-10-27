@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Session, db } from '../lib/firebase';
-import { cn, extractSafeHostname, getMillis } from '../lib/utils';
+import { cn, extractSafeHostname, getMillis, truncateForFirestore } from '../lib/utils';
 
 interface CrawlerSessionManagerModalProps {
   isOpen: boolean;
@@ -152,7 +152,7 @@ export function CrawlerSessionManagerModal({
       // 1. If user is authenticated and hasn't opted for local only, sync to Firebase
       if (userId && !saveToLocalOnly) {
         if (activeSession && activeSession.id && !activeSession.id.startsWith('offline_')) {
-          await updateDoc(doc(db, 'sessions', activeSession.id), {
+          const updatePayload = truncateForFirestore({
             title: titleToSave,
             url: currentSettings.url,
             results: currentResults,
@@ -161,8 +161,9 @@ export function CrawlerSessionManagerModal({
             updatedAt: serverTimestamp(),
             description: saveDescription.trim() || undefined
           });
+          await updateDoc(doc(db, 'sessions', activeSession.id), updatePayload);
         } else {
-          await addDoc(collection(db, 'sessions'), {
+          const createPayload = truncateForFirestore({
             userId,
             type: 'crawler',
             title: titleToSave,
@@ -175,6 +176,7 @@ export function CrawlerSessionManagerModal({
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
+          await addDoc(collection(db, 'sessions'), createPayload);
         }
       }
 

@@ -82,10 +82,21 @@ export function SessionNotesModal({
     setErrorMessage('');
     
     try {
-      await updateDoc(doc(db, 'sessions', session.id), {
-        notes: contentToSave,
-        updatedAt: serverTimestamp()
-      });
+      if (session.id.startsWith('offline_')) {
+        const localKey = 'crawler_offline_sessions_v2';
+        const list = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const idx = list.findIndex((s: any) => s.id === session.id);
+        if (idx !== -1) {
+          list[idx].notes = contentToSave;
+          list[idx].updatedAt = new Date().toISOString();
+          localStorage.setItem(localKey, JSON.stringify(list));
+        }
+      } else {
+        await updateDoc(doc(db, 'sessions', session.id), {
+          notes: contentToSave,
+          updatedAt: serverTimestamp()
+        });
+      }
       
       setInitialNotes(contentToSave);
       setSaveStatus('saved');

@@ -50,6 +50,7 @@ export default function App() {
   const [selectedNotesSession, setSelectedNotesSession] = useState<Session | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [mobileExploreMenuOpen, setMobileExploreMenuOpen] = useState(false);
+  const [crawlerInitialUrl, setCrawlerInitialUrl] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialLoadRef = useRef(false);
 
@@ -385,6 +386,7 @@ export default function App() {
   const getToolName = (type?: string) => {
     switch (type) {
       case 'crawler': return 'Crawler';
+      case 'scheduler': return 'Schedule';
       case 'smart_crawler': return 'Smart';
       case 'data_extractor': return 'Local';
       case 'extractor': return 'Extractor';
@@ -392,6 +394,7 @@ export default function App() {
       case 'bulk': return 'Fetch';
       case 'file_merge': return 'Merge';
       case 'ai_chat': return 'Chat';
+      case 'history': return 'Insights';
       default: return type || 'Tool';
     }
   };
@@ -1298,6 +1301,7 @@ export default function App() {
                       allSessions={sessions}
                       onSelectSession={(s) => setActiveSessionId(s.id || null)}
                       onSessionCreated={setActiveSessionId} 
+                      initialUrl={crawlerInitialUrl}
                     />
                   </div>
 
@@ -1305,6 +1309,7 @@ export default function App() {
                     <SchedulerDashboard 
                       userId={userId} 
                       onOpenCrawler={(targetUrl) => {
+                        setCrawlerInitialUrl(targetUrl);
                         setActiveTab('crawler');
                       }}
                     />

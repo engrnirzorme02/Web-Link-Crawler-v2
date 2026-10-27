@@ -56,7 +56,7 @@ export function SitemapVisualizer({ results, startUrl = '', initialUrl, onSelect
 
     const root: SitemapNode = {
       id: 'root',
-      name: startUrl ? extractSafeHostname(startUrl, 'Web Link Structure') : 'Web Link Structure',
+      name: rootUrl ? extractSafeHostname(rootUrl, 'Web Link Structure') : 'Web Link Structure',
       path: '/',
       depth: 0,
       children: [],

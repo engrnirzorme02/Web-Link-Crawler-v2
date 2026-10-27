@@ -411,8 +411,11 @@ function resolveRedirect(url: string): Promise<string> {
 // ==============================================================================
 
 export function isPrivateOrReservedIP(ip: string): boolean {
+  // Strip bracket enclosures for IPv6 e.g. [::1] -> ::1
+  const cleanIp = ip.replace(/^\[|\]$/g, '');
+
   // Normalize IPv4-mapped IPv6 (::ffff:127.0.0.1 -> 127.0.0.1)
-  const ipv4 = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+  const ipv4 = cleanIp.startsWith('::ffff:') ? cleanIp.slice(7) : cleanIp;
 
   // IPv4 Checks
   if (/^(\d{1,3}\.){3}\d{1,3}$/.test(ipv4)) {
@@ -612,13 +615,6 @@ export function isStaticAssetPath(pathname: string): boolean {
   }
 
   return false;
-}
-
-async function generateContentWithFallback(_aiInstance: any, _params: any): Promise<any> {
-  // In Passive Mode, return safe offline response with 0 outbound API requests
-  return {
-    text: "🛡️ [PASSIVE SAFE MODE ACTIVE] Cloud automated API calls are cancelled/deactivated to protect against Google Cloud policy violations."
-  };
 }
 
 function isUrlDomainAllowed(candidateUrl: string, startDomain: string, includeDomainsList: string[] = []): boolean {

@@ -94,10 +94,21 @@ export function TagEditModal({ session, onClose, onTagsUpdated }: TagEditModalPr
     setIsSaving(true);
     setFeedbackMsg(null);
     try {
-      await updateDoc(doc(db, 'sessions', session.id), {
-        tags,
-        updatedAt: serverTimestamp()
-      });
+      if (session.id.startsWith('offline_')) {
+        const localKey = 'crawler_offline_sessions_v2';
+        const list = JSON.parse(localStorage.getItem(localKey) || '[]');
+        const idx = list.findIndex((s: any) => s.id === session.id);
+        if (idx !== -1) {
+          list[idx].tags = tags;
+          list[idx].updatedAt = new Date().toISOString();
+          localStorage.setItem(localKey, JSON.stringify(list));
+        }
+      } else {
+        await updateDoc(doc(db, 'sessions', session.id), {
+          tags,
+          updatedAt: serverTimestamp()
+        });
+      }
       if (onTagsUpdated) {
         onTagsUpdated(session.id, tags);
       }

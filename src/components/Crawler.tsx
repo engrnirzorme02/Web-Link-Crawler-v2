@@ -29,12 +29,19 @@ interface CrawlerProps {
   allSessions?: Session[];
   onSelectSession?: (session: Session) => void;
   onSessionCreated: (id: string) => void;
+  initialUrl?: string;
 }
 
 const STATIC_MEDIA_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'pdf', 'zip', 'css', 'js', 'mp4', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'avi', 'mov', 'mp3', 'wav', 'tar', 'gz'];
 
-export default function Crawler({ session, userId, allSessions = [], onSelectSession, onSessionCreated }: CrawlerProps) {
-  const [url, setUrl] = useState('');
+export default function Crawler({ session, userId, allSessions = [], onSelectSession, onSessionCreated, initialUrl }: CrawlerProps) {
+  const [url, setUrl] = useState(initialUrl || '');
+
+  useEffect(() => {
+    if (initialUrl && !session) {
+      setUrl(initialUrl);
+    }
+  }, [initialUrl, session]);
   
   // Persisted configurations with usePersistedConfig
   const [crawlPreset, setCrawlPreset, resetCrawlPreset] = usePersistedConfig<'single' | 'depth' | 'domain'>('crawler_preset', 'domain');

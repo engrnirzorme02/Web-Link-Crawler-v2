@@ -3,7 +3,7 @@ import { AlertCircle, Bot, CheckCircle2, CheckSquare, ChevronDown, Copy, Downloa
 import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Session, db } from '../lib/firebase';
-import { cn } from '../lib/utils';
+import { cn, truncateForFirestore } from '../lib/utils';
 import { ApiUsageMonitor } from './ApiUsageMonitor';
 
 interface Message {
@@ -230,12 +230,13 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
     
     try {
       if (session?.id && session.type === 'ai_chat') {
-        await updateDoc(doc(db, 'sessions', session.id), {
+        const updatePayload = truncateForFirestore({
           results: currentMessages,
           updatedAt: serverTimestamp()
         });
+        await updateDoc(doc(db, 'sessions', session.id), updatePayload);
       } else {
-        const newSession: Session = {
+        const newSession: Session = truncateForFirestore({
           userId: userId,
           type: 'ai_chat',
           title: currentMessages.length > 0 ? currentMessages[0].text.substring(0, 30) + '...' : 'New Chat',
@@ -243,7 +244,7 @@ const [speakingId, setSpeakingId] = useState<string | null>(null);
           logs: [],
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        };
+        });
         const sessionId = Date.now().toString();
         await setDoc(doc(db, 'sessions', sessionId), {
           ...newSession,
