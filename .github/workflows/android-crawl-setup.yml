@@ -1,0 +1,47 @@
+name: Android Crawl Setup QA
+on:
+  pull_request:
+    paths:
+      - "src/components/CrawlSetupForm.tsx"
+      - "src/components/Crawler.tsx"
+      - "src/lib/crawlSetup.ts"
+      - "tests/crawl-setup.test.ts"
+      - "tests/crawl-setup-mobile.cjs"
+      - ".github/workflows/android-crawl-setup.yml"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies (legacy npm lockfile is out of sync)
+        run: npm install --no-package-lock --no-audit --no-fund
+      - name: TypeScript check
+        run: npm run lint
+      - name: Production build
+        run: npm run build
+      - name: Preset and validation regression tests
+        run: node --import tsx --test tests/crawl-setup.test.ts
+      - name: Install mobile viewport smoke test dependency
+        run: npm install --no-save --package-lock=false playwright@1.56.1
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Launch Vite
+        run: |
+          npx vite --host 127.0.0.1 --port 4173 > /tmp/vite.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/vite.log
+          exit 1
+      - name: Android-style viewport smoke tests (360/393/412 px)
+        run: node tests/crawl-setup-mobile.cjs
