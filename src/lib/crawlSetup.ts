@@ -26,6 +26,8 @@ export function validateCrawlSetup(values: CrawlSetupValues): CrawlSetupValidati
     errors.url = 'Enter at least one website URL.';
   } else {
     const invalidTarget = targets.find((target) => {
+      // An unsupported explicit URL scheme must never be reinterpreted as HTTPS.
+      if (/^[a-z][a-z\d+.-]*:\/\//i.test(target) && !/^https?:\/\//i.test(target)) return true;
       try {
         const normalized = /^https?:\/\//i.test(target) ? target : `https://${target}`;
         const parsed = new URL(normalized);
