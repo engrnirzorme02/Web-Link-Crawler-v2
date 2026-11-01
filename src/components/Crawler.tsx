@@ -6,6 +6,7 @@ import { createEventSourceConnection } from '../lib/api';
 import { db, ParsedPageData, Session } from '../lib/firebase';
 import { cleanAndSanitizeUrl, cn, extractSafeHostname, truncateForFirestore } from '../lib/utils';
 import { ContentEntitiesViewer } from './ContentEntitiesViewer';
+import { CrawlSetupForm } from './CrawlSetupForm';
 import { CrawlVisualizer } from './CrawlVisualizer';
 import { CrawlerSessionManagerModal } from './CrawlerSessionManagerModal';
 import { SessionNotesModal } from './SessionNotesModal';
@@ -104,13 +105,18 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
       setMaxDepth('0');
     } else if (preset === 'depth') {
       setMode('subdir');
-      const d = parseInt(maxDepth, 10);
-      if (isNaN(d) || d < 1 || d > 5) {
+      const d = Number(maxDepth);
+      if (!Number.isInteger(d) || d < 1 || d > 10) {
         setMaxDepth('2');
       }
     } else if (preset === 'domain') {
       setMode('domain');
-      setMaxDepth('5');
+      // Preserve an explicit valid depth, including domain + depth 2.
+      // Switching back from single-page (depth 0) restores the safe default.
+      const d = Number(maxDepth);
+      if (!Number.isInteger(d) || d < 1 || d > 10) {
+        setMaxDepth('2');
+      }
       setSubdomainOnly(true);
     }
   };
@@ -141,6 +147,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sessionManagerOpen, setSessionManagerOpen] = useState(false);
   const [mobileTab, setMobileTab] = useState<'config' | 'results' | 'visualize'>('config');
+  const [showMobileAdvanced, setShowMobileAdvanced] = useState(false);
   
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [stats, setStats] = useState({ 
@@ -524,6 +531,8 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
     restrictDomain?: string,
     crawlDelay?: string
   }) => {
+    // Ignore duplicate taps while a crawl request is in flight.
+    if (isCrawlingRef.current) return;
     let combinedText = url;
     if (attachedFiles.length > 0) {
       combinedText += '\n' + attachedFiles.map(f => f.content).join('\n');
@@ -1131,6 +1140,38 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
         )}>
           <div className="flex-1 md:overflow-y-auto p-5 md:p-6 space-y-6 custom-scrollbar">
             
+            {/* Simplified mobile workflow; the full existing configuration stays intact. */}
+            <div className="md:hidden">
+              {showMobileAdvanced ? (
+                <button
+                  type="button"
+                  onClick={() => setShowMobileAdvanced(false)}
+                  className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl border border-teal-300 px-4 text-sm font-semibold text-teal-700 dark:border-teal-700 dark:text-teal-300"
+                >
+                  Simple setup
+                </button>
+              ) : (
+                <CrawlSetupForm
+                  url={url}
+                  mode={mode}
+                  maxPages={maxPages}
+                  maxDepth={maxDepth}
+                  isCrawling={isCrawling}
+                  error={error}
+                  attachedFileCount={attachedFiles.length}
+                  onUrlChange={setUrl}
+                  onModeChange={(scope) => handleSelectPreset(scope === 'subdir' ? 'depth' : scope)}
+                  onPagesChange={setMaxPages}
+                  onDepthChange={setMaxDepth}
+                  onStart={() => { void handleStart(); }}
+                  onStop={handleStop}
+                  onShowResults={() => setMobileTab('results')}
+                  onAdvanced={() => setShowMobileAdvanced(true)}
+                />
+              )}
+            </div>
+
+            <div className={cn("space-y-6", !showMobileAdvanced && "hidden md:block")}>
             {/* Quick Session Manager & Export Action Bar (Material Design 3 card style) */}
             <div className="flex items-center justify-between p-2.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/50 rounded-2xl">
               <div className="flex items-center gap-2 pl-1">
@@ -1737,6 +1778,7 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
                 )}
               </div>
             )}
+            </div> {/* End of original advanced controls */}
           </div>
         </div>
 
