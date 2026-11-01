@@ -19,7 +19,7 @@ const { chromium } = require('playwright');
       const page = await context.newPage();
       const errors = [];
       page.on('pageerror', (error) => errors.push(error.message));
-      await page.goto('http://127.0.0.1:4173/', { waitUntil: 'domcontentloaded' });
+      await page.goto('http://127.0.0.1:4173/tests/fixtures/mobile-crawl-setup.html', { waitUntil: 'domcontentloaded' });
       const targets = page.locator('#mobile-crawl-targets');
       await targets.waitFor({ state: 'visible', timeout: 20000 });
       await targets.fill('https://example.com');
