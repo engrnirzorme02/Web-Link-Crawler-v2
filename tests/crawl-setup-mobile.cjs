@@ -18,7 +18,12 @@ const { chromium } = require('playwright');
       });
       const page = await context.newPage();
       const errors = [];
-      page.on('pageerror', (error) => errors.push(error.message));
+      page.on('pageerror', (error) => {
+        // Vite's development HMR socket can close during navigation/teardown.
+        // Ignore only this transport-specific warning, not application errors.
+        if (/^WebSocket closed without opened\.?$/.test(error.message)) return;
+        errors.push(error.message);
+      });
       await page.goto('http://127.0.0.1:4173/tests/fixtures/mobile-crawl-setup.html', { waitUntil: 'domcontentloaded' });
       const targets = page.locator('#mobile-crawl-targets');
       await targets.waitFor({ state: 'visible', timeout: 20000 });
