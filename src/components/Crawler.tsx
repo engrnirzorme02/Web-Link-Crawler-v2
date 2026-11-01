@@ -3,6 +3,7 @@ import { AlertCircle, BarChart3, Check, CheckCircle2, ChevronDown, ChevronUp, Cl
 import React, { useEffect, useRef, useState } from 'react';
 import { usePersistedConfig } from '../hooks/usePersistedConfig';
 import { createEventSourceConnection } from '../lib/api';
+import { resolveCrawlPreset } from '../lib/crawlSetup';
 import { db, ParsedPageData, Session } from '../lib/firebase';
 import { cleanAndSanitizeUrl, cn, extractSafeHostname, truncateForFirestore } from '../lib/utils';
 import { ContentEntitiesViewer } from './ContentEntitiesViewer';
@@ -100,25 +101,10 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
 
   const handleSelectPreset = (preset: 'single' | 'depth' | 'domain') => {
     setCrawlPreset(preset);
-    if (preset === 'single') {
-      setMode('single');
-      setMaxDepth('0');
-    } else if (preset === 'depth') {
-      setMode('subdir');
-      const d = Number(maxDepth);
-      if (!Number.isInteger(d) || d < 1 || d > 10) {
-        setMaxDepth('2');
-      }
-    } else if (preset === 'domain') {
-      setMode('domain');
-      // Preserve an explicit valid depth, including domain + depth 2.
-      // Switching back from single-page (depth 0) restores the safe default.
-      const d = Number(maxDepth);
-      if (!Number.isInteger(d) || d < 1 || d > 10) {
-        setMaxDepth('2');
-      }
-      setSubdomainOnly(true);
-    }
+    const next = resolveCrawlPreset(preset, maxDepth);
+    setMode(next.mode);
+    setMaxDepth(next.maxDepth);
+    if (preset === 'domain') setSubdomainOnly(true);
   };
 
   const handleStepDepth = (delta: number) => {
