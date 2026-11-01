@@ -362,9 +362,11 @@ export default function Crawler({ session, userId, allSessions = [], onSelectSes
         setUrl(session.url);
       }
       if (session.settings) {
-        setMode(session.settings.mode || 'domain');
-        setMaxPages(session.settings.maxPages || '50');
-        setMaxDepth(session.settings.maxDepth || '3');
+        const loadedMode: CrawlMode = session.settings.mode || 'domain';
+        setMode(loadedMode);
+        setCrawlPreset(loadedMode === 'subdir' ? 'depth' : loadedMode);
+        setMaxPages(String(session.settings.maxPages ?? '50'));
+        setMaxDepth(String(session.settings.maxDepth ?? '2'));
         if (session.settings.maxBreadth) setMaxBreadth(session.settings.maxBreadth);
         setFileTypes(session.settings.fileTypes || '');
         setIncludePatterns(session.settings.includePatterns || '');
