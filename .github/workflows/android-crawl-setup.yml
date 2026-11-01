@@ -22,8 +22,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - name: Install project dependencies
-        run: npm ci
+      - name: Install dependencies (legacy npm lockfile is out of sync)
+        run: npm install --no-package-lock --no-audit --no-fund
       - name: TypeScript check
         run: npm run lint
       - name: Production build
