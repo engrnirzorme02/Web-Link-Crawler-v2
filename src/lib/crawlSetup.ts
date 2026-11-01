@@ -57,3 +57,23 @@ export function validateCrawlSetup(values: CrawlSetupValues): CrawlSetupValidati
     targetCount: targets.length
   };
 }
+
+export type CrawlPreset = 'single' | 'depth' | 'domain';
+
+/**
+ * Pure preset transition: keep a chosen depth instead of unexpectedly
+ * resetting domain mode to a deeper five-level crawl.
+ */
+export function resolveCrawlPreset(preset: CrawlPreset, previousDepth: string): {
+  mode: CrawlScope;
+  maxDepth: string;
+} {
+  if (preset === 'single') return { mode: 'single', maxDepth: '0' };
+  const depth = Number(previousDepth);
+  return {
+    mode: preset === 'depth' ? 'subdir' : 'domain',
+    maxDepth: Number.isSafeInteger(depth) && depth >= 1 && depth <= 10
+      ? previousDepth
+      : '2'
+  };
+}
